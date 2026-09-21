@@ -630,6 +630,51 @@ class TestRunSpec(unittest.TestCase):
         self.assertEqual(s._check_budgets(), "")
 
 
+class TestServerBinding(unittest.TestCase):
+    """端口绑定语义。
+
+    这里防的是一个踩过的坑：Python 的 HTTPServer 把 allow_reuse_address 默认设成 1，
+    在 Windows 上这允许**两个活着的进程绑同一个地址**。于是每次「重启服务」
+    都只是又起了一个，几个进程一起抢连接、共用一个 SQLite 账本，
+    serve() 里的端口递增逻辑从来没生效过。
+    """
+
+    def test_reuse_address_is_platform_appropriate(self):
+        # POSIX 需要它才能在 TIME_WAIT 期间立刻复用端口；
+        # Windows 必须关掉，否则会静默起出多个实例
+        self.assertEqual(Server.allow_reuse_address, os.name != "nt")
+
+    def test_second_bind_on_same_port_is_rejected(self):
+        from http.server import BaseHTTPRequestHandler
+        first = Server(("127.0.0.1", 0), BaseHTTPRequestHandler)
+        port = first.server_address[1]
+        try:
+            with self.assertRaises(OSError, msg="同端口第二次绑定必须失败"):
+                Server(("127.0.0.1", port), BaseHTTPRequestHandler)
+        finally:
+            first.server_close()
+
+    def test_port_walk_finds_a_free_port(self):
+        """serve() 依赖「绑定失败就往后试」来避让已占用的端口。"""
+        from http.server import BaseHTTPRequestHandler
+        first = Server(("127.0.0.1", 0), BaseHTTPRequestHandler)
+        port = first.server_address[1]
+        second = None
+        try:
+            for p in range(port, port + 20):
+                try:
+                    second = Server(("127.0.0.1", p), BaseHTTPRequestHandler)
+                    break
+                except OSError:
+                    continue
+            self.assertIsNotNone(second, "20 个端口内应该能找到空闲的")
+            self.assertNotEqual(second.server_address[1], port)
+        finally:
+            first.server_close()
+            if second:
+                second.server_close()
+
+
 class TestMultiSession(unittest.TestCase):
     """多配置并发：这是「能不能多个配置一起跑」的核心保障。"""
 
