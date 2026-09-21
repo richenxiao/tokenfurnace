@@ -22,6 +22,7 @@ from tokenfurnace.engine import (Engine, Live, RunSpec, Session,  # noqa: E402
                                instant_rate, spark_series)
 from tokenfurnace.providers import (AUTH_STYLES, PROTOCOLS, Adapter,  # noqa: E402
                                   classify, guess_protocol, join_url)
+from tokenfurnace.server import Server  # noqa: E402
 from tokenfurnace.store import Store  # noqa: E402
 
 
