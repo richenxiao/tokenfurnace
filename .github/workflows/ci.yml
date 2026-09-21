@@ -45,3 +45,10 @@ jobs:
 
       - name: 冒烟测试
         run: python scripts/smoke_ci.py
+
+      # 发布包必须每次都构建一遍。前端资源如果在压缩包里读不出来，
+      # 只会在用户下载之后才暴露；而 pkgutil 走 zipimport 的行为
+      # 在 3.9 和 3.13 上未必一致，所以三个任务都要跑。
+      # build_release.py 自带自检：真起服务、真读包内资源。
+      - name: 构建单文件发布包并自检
+        run: python scripts/build_release.py
