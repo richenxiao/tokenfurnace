@@ -36,6 +36,8 @@ tokenfurnace
 
 All three need Python 3.9+ and nothing else. Config and ledger land in whichever directory you run the command from.
 
+**Don't want to type commands?** The source tree ships `start.bat` (Windows) and `start.sh` (macOS / Linux). Double-click either one; the script finds Python itself and tells you if it can't.
+
 ---
 
 ## Why this exists
@@ -352,6 +354,8 @@ The server exposes HTTP endpoints for scripting:
 ```
 tokenfurnace/
 ├── run.py                    launcher
+├── start.bat                 double-click launcher (Windows)
+├── start.sh                  double-click launcher (macOS / Linux)
 ├── tokenfurnace/
 │   ├── cli.py                CLI entry point
 │   ├── config.py             config sources, profiles, key resolution

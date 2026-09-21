@@ -36,6 +36,8 @@ tokenfurnace
 
 三种方式都只需要 Python 3.9+，没有其他依赖。配置和账本会落在你执行命令时所在的目录。
 
+**不想敲命令**：源码目录里带了 `start.bat`（Windows）和 `start.sh`（macOS / Linux），双击就能起，脚本会自己找 Python 并给出提示。
+
 ---
 
 ## 为什么会有这个工具
@@ -354,6 +356,8 @@ python run.py
 ```
 tokenfurnace/
 ├── run.py                    启动器
+├── start.bat                 双击启动（Windows）
+├── start.sh                  双击启动（macOS / Linux）
 ├── tokenfurnace/
 │   ├── cli.py                命令行入口
 │   ├── config.py             配置源、Profile、密钥解析
