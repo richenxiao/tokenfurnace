@@ -18,13 +18,12 @@ import sys
 import tempfile
 import threading
 import urllib.request
-from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from tokenfurnace import __version__                      # noqa: E402
 from tokenfurnace.providers import AUTH_STYLES, PROTOCOLS  # noqa: E402
-from tokenfurnace.server import App, Handler               # noqa: E402
+from tokenfurnace.server import App, Handler, Server       # noqa: E402
 
 FAILED: list[str] = []
 
@@ -46,7 +45,7 @@ def main() -> int:
     Handler.app = app
 
     # 端口 0：由系统分配一个空闲端口，不会和别的任务撞车
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    httpd = Server(("127.0.0.1", 0), Handler)
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{port}"

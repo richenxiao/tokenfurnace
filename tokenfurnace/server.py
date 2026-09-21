@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import mimetypes
+import os
 import pkgutil
 import threading
 import time
@@ -458,6 +459,23 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, ctype)
 
 
+class Server(ThreadingHTTPServer):
+    """本地 HTTP 服务。
+
+    `allow_reuse_address` 必须按平台分开设，否则会静默起出多个实例：
+
+    * Windows 上 SO_REUSEADDR 允许**两个活着的进程绑同一个地址**，
+      于是每次「重启」都只是又起了一个，几个进程一起抢连接、共用一个 SQLite 账本，
+      而且谁接受连接是不确定的。关掉之后绑定已占用的端口会正常失败，
+      serve() 里的端口递增逻辑才会真正生效。
+    * POSIX 上 SO_REUSEADDR 只影响 TIME_WAIT 期间的重绑，是重启后能立刻再用
+      同一端口的关键，所以要留着。
+    """
+
+    daemon_threads = True
+    allow_reuse_address = os.name != "nt"
+
+
 def serve(base_dir: Path, host: str = "127.0.0.1", port: int = 8760,
           open_browser: bool = True, config_path: Path | None = None) -> None:
     app = App(base_dir, config_path)
@@ -466,7 +484,7 @@ def serve(base_dir: Path, host: str = "127.0.0.1", port: int = 8760,
     httpd = None
     for p in range(port, port + 20):
         try:
-            httpd = ThreadingHTTPServer((host, p), Handler)
+            httpd = Server((host, p), Handler)
             port = p
             break
         except OSError:
