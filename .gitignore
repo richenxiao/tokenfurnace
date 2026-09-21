@@ -1,0 +1,47 @@
+# ---- 本地配置与数据：绝对不要提交 ----
+config.json
+config.local.json
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+server.log
+*.log
+
+# ---- 密钥 ----
+key.txt
+keys/
+*.key
+.env
+.env.*
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.python-version
+
+# ---- 测试与缓存 ----
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

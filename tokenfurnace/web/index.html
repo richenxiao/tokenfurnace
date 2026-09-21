@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenFurnace · LLM Token 消费与额度管理</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <span class="logo">◆</span>
+  <h1>TokenFurnace</h1>
+  <span class="badge grey" id="verBadge">v1.0</span>
+  <span class="meta" id="profileMeta">—</span>
+  <span class="spacer"></span>
+  <span class="meta" id="statusText"><span class="dot idle"></span> 空闲</span>
+  <button class="primary" id="btnStart">▶ 用当前配置开始消费</button>
+  <button class="danger" id="btnStop" disabled>■ 全部停止</button>
+</header>
+
+<div class="layout">
+
+  <!-- ==================== 左：配置 ==================== -->
+  <div class="col">
+
+    <details class="panel" open>
+      <summary>① 连接配置<span class="badge blue" id="connBadge">未测试</span></summary>
+      <div class="body">
+        <div id="firstRun"></div>
+
+        <div class="profile-bar">
+          <select id="profileSel" title="切换配置档案"></select>
+          <button class="sm ghost" id="btnNewProf" title="新建配置">＋</button>
+          <button class="sm ghost" id="btnDupProf" title="复制当前配置">⧉</button>
+          <button class="sm ghost del" id="btnDelProf" title="删除当前配置">✕</button>
+        </div>
+        <div class="save-state" id="saveState"></div>
+
+        <hr class="divider">
+
+        <label class="field"><span>名称</span><input type="text" id="profName"></label>
+
+        <label class="field"><span>接口协议</span></label>
+        <div class="seg grid2" id="protoSeg">
+          <button data-v="anthropic">Anthropic Messages<em>/v1/messages</em></button>
+          <button data-v="openai-chat">OpenAI Chat<em>/v1/chat/completions</em></button>
+          <button data-v="openai-responses">OpenAI Responses<em>/v1/responses</em></button>
+          <button data-v="gemini">Gemini Native<em>:generateContent</em></button>
+        </div>
+        <input type="hidden" id="protocol" value="openai-chat">
+
+        <label class="field"><span>认证字段<span class="tail">凭证放在哪个请求头</span></span>
+          <select id="authStyle"></select>
+        </label>
+        <div class="hint" id="authHint"></div>
+
+        <label class="field">
+          <span>Base URL<span class="tail">填根地址，版本段自动补</span></span>
+          <input type="text" id="baseUrl" placeholder="https://api.example.com">
+        </label>
+
+        <label class="field"><span>密钥来源</span></label>
+        <div class="seg" id="keySourceSeg">
+          <button data-v="inline">直接填写</button>
+          <button data-v="env">环境变量</button>
+          <button data-v="file">文件路径</button>
+        </div>
+        <input type="hidden" id="keySource" value="inline">
+        <label class="field"><span id="keyLabel">API Key</span>
+          <input type="text" id="keyValue" placeholder="sk-...">
+        </label>
+        <div class="hint" id="keyHint"></div>
+
+        <hr class="divider">
+
+        <div class="btn-row">
+          <button class="sm" id="btnTest">测试连接</button>
+          <button class="sm" id="btnModels">拉取模型</button>
+          <span class="spacer"></span>
+          <button class="sm primary" id="btnSave">保存</button>
+        </div>
+        <div class="btn-row subtle">
+          <button class="sm ghost" id="btnImportCfg">导入配置…</button>
+          <button class="sm ghost" id="btnExportCfg">导出全部配置</button>
+          <input type="file" id="importFile" accept=".json" hidden>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>② 模型选择<span class="badge blue" id="modelBadge">0 个</span></summary>
+      <div class="body">
+        <div class="search"><input type="text" id="modelFilter" placeholder="搜索模型名…"></div>
+        <div class="hint">点行切换勾选。权重决定分流概率，积分/1K 留空用全局值。</div>
+        <div class="model-list" id="modelList"></div>
+        <div class="btn-row">
+          <button class="sm ghost" id="btnSelAll">勾选可见</button>
+          <button class="sm ghost" id="btnSelNone">取消可见</button>
+          <button class="sm ghost" id="btnSelClear">清空全部</button>
+        </div>
+        <div class="add-model">
+          <input type="text" id="newModel" placeholder="列表里没有？手动填模型 ID">
+          <button class="sm ghost" id="btnAddModel">添加</button>
+        </div>
+        <div class="hint" id="pickHint"></div>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>③ 消费策略</summary>
+      <div class="body">
+        <label class="field"><span>消耗模式<span class="tail" id="modeTail"></span></span></label>
+        <div class="seg" id="modeSeg">
+          <button data-v="prefill">预填充<em>快 80 倍</em></button>
+          <button data-v="decode">生成<em>最慢</em></button>
+          <button data-v="mixed">混合<em>更自然</em></button>
+        </div>
+        <input type="hidden" id="modeSel" value="prefill">
+
+        <div class="row">
+          <label class="field"><span>并发数<span class="tail">超过 4 易触发限流</span></span>
+            <div class="stepper" data-min="1" data-max="64" data-step="1">
+              <button data-d="-1">−</button><input type="number" id="concurrency"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>单请求超时</span>
+            <div class="stepper" data-min="10" data-max="900" data-step="10">
+              <button data-d="-1">−</button><input type="number" id="timeout"><span class="unit">秒</span><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <label class="field"><span>单请求输入规模<span class="tail" id="inputHint"></span></span>
+          <div class="stepper" data-min="1000" data-max="520000" data-step="20000">
+            <button data-d="-1">−</button><input type="number" id="inputChars"><span class="unit">字符</span><button data-d="1">+</button>
+          </div>
+        </label>
+
+        <div class="row">
+          <label class="field"><span>最大输出</span>
+            <div class="stepper" data-min="1" data-max="65536" data-step="64">
+              <button data-d="-1">−</button><input type="number" id="maxTokens"><span class="unit">tok</span><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>思考强度</span>
+            <select id="reasoning">
+              <option value="none">none · 最快</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label class="field"><span>失败重试</span>
+            <div class="stepper" data-min="1" data-max="20" data-step="1">
+              <button data-d="-1">−</button><input type="number" id="retry"><span class="unit">次</span><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>安全余量</span>
+            <div class="stepper" data-min="0.5" data-max="1" data-step="0.01">
+              <button data-d="-1">−</button><input type="number" id="safety"><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <label class="switch"><input type="checkbox" id="cacheBust"><span class="track"></span>
+          <span class="txt">击穿 prefix 缓存
+            <small>每次请求重新生成随机文本，避免命中缓存被打折计费</small></span></label>
+
+        <div class="hint" id="estHint"></div>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>④ 额度与时长</summary>
+      <div class="body">
+        <div class="hint">任一上限触顶即自动停止。<b>0 表示不限</b>。</div>
+        <div class="row">
+          <label class="field"><span>积分上限</span>
+            <div class="stepper" data-min="0" data-max="10000000" data-step="5000">
+              <button data-d="-1">−</button><input type="number" id="maxPoints"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>token 上限</span>
+            <div class="stepper" data-min="0" data-max="10000000000" data-step="1000000">
+              <button data-d="-1">−</button><input type="number" id="maxTokensCap"><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field"><span>请求数上限</span>
+            <div class="stepper" data-min="0" data-max="1000000" data-step="10">
+              <button data-d="-1">−</button><input type="number" id="maxRequests"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>运行时长</span>
+            <div class="stepper" data-min="0" data-max="1440" data-step="5">
+              <button data-d="-1">−</button><input type="number" id="duration"><span class="unit">分</span><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <hr class="divider">
+
+        <label class="switch"><input type="checkbox" id="enforceWin"><span class="track"></span>
+          <span class="txt">滚动窗口限流
+            <small>按 5 小时 / 周两个滑动窗口限制用量，撞墙自动等待</small></span></label>
+
+        <div class="row">
+          <label class="field"><span>5 小时额度</span>
+            <div class="stepper" data-min="0" data-max="10000000" data-step="10000">
+              <button data-d="-1">−</button><input type="number" id="limit5h"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>周额度</span>
+            <div class="stepper" data-min="0" data-max="100000000" data-step="100000">
+              <button data-d="-1">−</button><input type="number" id="limitWeek"><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <label class="field"><span>换算系数<span class="tail">积分 / 1K tokens</span></span>
+          <div class="stepper" data-min="0" data-max="1000" data-step="0.1">
+            <button data-d="-1">−</button><input type="number" id="ppk" step="0.0001"><button data-d="1">+</button>
+            <button id="btnCalib" style="width:auto;padding:0 9px;font-size:11px">反推</button>
+          </div>
+        </label>
+
+        <label class="switch"><input type="checkbox" id="loop"><span class="track"></span>
+          <span class="txt">挂机模式
+            <small>撞额度后等待窗口滑出并自动续跑</small></span></label>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>⑤ 批量启动<span class="badge grey" id="batchBadge">未选</span></summary>
+      <div class="body">
+        <div class="hint">勾选多个配置一次全部启动，不用来回切换。每个会话用各自的密钥、模型和额度；
+          策略参数（模式、并发、预算）取上面这一份。</div>
+        <div id="batchList"></div>
+        <div class="btn-row">
+          <button class="sm primary" id="btnBatchStart">启动选中的配置</button>
+          <button class="sm ghost" id="btnBatchClear">清空选择</button>
+        </div>
+        <div class="hint" id="batchResult"></div>
+      </div>
+    </details>
+
+  </div>
+
+  <!-- ==================== 右：看板 ==================== -->
+  <div class="col">
+
+    <div class="hero">
+      <div>
+        <div class="label">实时消耗速率
+          <span class="spacer"></span>
+          <div class="seg mini" id="winSeg"
+               title="统计窗口越短越灵敏。注意：预填充模式下单个请求要 20~40 秒，5 秒窗口会间歇性归零">
+            <button data-v="5">5 秒</button>
+            <button data-v="10">10 秒</button>
+            <button data-v="20">20 秒</button>
+            <button data-v="60">60 秒</button>
+          </div>
+        </div>
+        <div class="value lv-idle" id="sRate">0<span class="u">tokens/秒</span></div>
+        <div class="sub">
+          <span>平均 <b id="sRateAvg">0</b> tok/s</span>
+          <span>峰值 <b id="sRatePeak">0</b> tok/s</span>
+          <span>吞吐 <b id="sRps">0</b> 请求/秒</span>
+        </div>
+        <div class="hint" id="rateWinNote"></div>
+      </div>
+      <div class="spark-box">
+        <canvas id="spark" height="62"></canvas>
+        <div class="spark-cap">最近 200 秒</div>
+      </div>
+    </div>
+
+    <div class="panel open" id="sessPanel">
+      <div class="head">运行中的会话<span class="badge grey" id="sessBadge">0</span>
+        <span class="spacer"></span>
+        <span class="meta" id="sessWorkers">并发 0 / 32</span>
+      </div>
+      <div class="body"><div id="sessList"></div></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat accent"><div class="k">已消耗 tokens</div><div class="v" id="sTokens">0</div>
+        <div class="s" id="sTokensSub">输入 0 · 输出 0</div></div>
+      <div class="stat green"><div class="k">预估消耗积分</div><div class="v" id="sPoints">—</div>
+        <div class="s" id="sPointsSub">需填换算系数</div></div>
+      <div class="stat"><div class="k">请求数</div><div class="v" id="sReq">0</div>
+        <div class="s" id="sReqSub">成功 0 · 失败 0</div></div>
+      <div class="stat"><div class="k">运行时长</div><div class="v" id="sElapsed">00:00</div>
+        <div class="s" id="sLeft">未设上限</div></div>
+      <div class="stat amber"><div class="k">缓存命中</div><div class="v" id="sCached">0</div>
+        <div class="s">应为 0，非 0 说明被缓存折扣</div></div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">消耗趋势
+        <span class="badge grey" id="chartBadge">10 秒粒度</span>
+        <span class="spacer"></span>
+        <div class="seg mini" id="rangeSeg">
+          <button data-v="live" class="on">近 5 分钟</button>
+          <button data-v="all">全部</button>
+        </div>
+      </div>
+      <div class="body">
+        <div class="chart-wrap">
+          <canvas id="chart" height="170"></canvas>
+          <div class="chart-tip" id="chartTip"></div>
+        </div>
+        <div class="chart-legend">
+          <span><i style="background:#3fb950"></i>瞬时速率 (tok/s)</span>
+          <span><i style="background:#1f6feb"></i>累计 tokens</span>
+          <span id="chartStat" style="margin-left:auto"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">滚动窗口占用<span class="badge grey" id="winBadge">未启用</span></div>
+      <div class="body">
+        <div>
+          <div class="kv"><span>5 小时窗口</span><span class="v" id="w5Text">—</span></div>
+          <div class="bar" id="w5Bar"><i style="width:0%"></i></div>
+        </div>
+        <div style="margin-top:6px">
+          <div class="kv"><span>周窗口</span><span class="v" id="wWText">—</span></div>
+          <div class="bar" id="wWBar"><i style="width:0%"></i></div>
+        </div>
+        <div class="kv" id="waitRow" style="display:none">
+          <span>等待中</span><span class="v" id="waitText">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">运行日志</div>
+      <div class="body"><div class="logs" id="logs"></div></div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">历史会话
+        <span class="badge grey" id="histBadge">0</span>
+        <span class="spacer"></span>
+        <button class="sm ghost" id="btnExpReq">导出请求明细 CSV</button>
+        <button class="sm ghost" id="btnExpRun">导出会话汇总 CSV</button>
+      </div>
+      <div class="body">
+        <div class="scroll">
+          <table>
+            <thead><tr>
+              <th>开始</th><th>配置</th><th>模型</th><th>状态</th>
+              <th style="text-align:right">请求</th><th style="text-align:right">失败</th>
+              <th style="text-align:right">tokens</th><th></th>
+            </tr></thead>
+            <tbody id="histBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

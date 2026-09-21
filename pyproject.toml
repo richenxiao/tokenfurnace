@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokenfurnace"
+version = "0.1.0"
+description = "Zero-dependency local web console to burn, observe and quota-manage LLM tokens. Four API protocols (Anthropic Messages, OpenAI Chat, OpenAI Responses, Gemini Native), concurrent profiles, and rolling 5h/weekly quota accounting. Built to convert SenseNova TokenPlan Flash-Lite credits into general credits."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "TokenFurnace contributors" }]
+keywords = [
+  "llm", "token", "token-usage", "token-burn", "quota", "quota-management",
+  "rate-limit", "rolling-window", "load-test", "benchmark",
+  "openai", "anthropic", "claude", "gemini", "sensenova", "tokenplan",
+  "dashboard", "monitoring", "zero-dependencies",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+  "Topic :: System :: Monitoring",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/richenxiao/tokenfurnace"
+Issues = "https://github.com/richenxiao/tokenfurnace/issues"
+
+[project.scripts]
+tokenfurnace = "tokenfurnace.cli:main"
+
+[tool.setuptools]
+packages = ["tokenfurnace"]
+
+[tool.setuptools.package-data]
+tokenfurnace = ["web/*"]

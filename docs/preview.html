@@ -1,0 +1,2113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TokenFurnace · LLM Token 消费与额度管理</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel-2: #1c2129;
+  --panel-3: #22272e;
+  --border: #262c36;
+  --border-2: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --muted-2: #6e7681;
+  --accent: #58a6ff;
+  --accent-dim: #1f6feb;
+  --green: #3fb950;
+  --amber: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", Roboto, sans-serif;
+  font-size: 14px; line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==================== 布局 ==================== */
+header {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 22px; background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 30;
+}
+header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+header .logo { color: var(--accent); font-size: 18px; }
+header .spacer { flex: 1; }
+header .meta { color: var(--muted); font-size: 12px; }
+
+.layout {
+  display: grid; grid-template-columns: 410px minmax(0, 1fr);
+  gap: 18px; padding: 18px 22px 70px; align-items: start;
+}
+@media (max-width: 1200px) { .layout { grid-template-columns: 1fr; } }
+.col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+/* ==================== 面板 ==================== */
+.panel {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.panel > summary, .panel > .head {
+  list-style: none; cursor: pointer; user-select: none;
+  padding: 12px 16px; font-weight: 600; font-size: 13px;
+  display: flex; align-items: center; gap: 9px;
+  border-bottom: 1px solid transparent;
+}
+.panel[open] > summary, .panel.open > .head { border-bottom-color: var(--border); }
+.panel > summary::-webkit-details-marker { display: none; }
+.panel > summary::after {
+  content: "▾"; margin-left: auto; color: var(--muted); font-size: 11px;
+  transition: transform .15s;
+}
+.panel[open] > summary::after { transform: rotate(180deg); }
+.panel .body { padding: 14px 16px; display: flex; flex-direction: column; gap: 13px; }
+.panel .head .spacer { flex: 1; }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge.blue   { background: #1f6feb22; color: var(--accent); border-color: #1f6feb55; }
+.badge.green  { background: #23863622; color: var(--green);  border-color: #23863655; }
+.badge.amber  { background: #9e6a0322; color: var(--amber);  border-color: #9e6a0355; }
+.badge.red    { background: #da363322; color: var(--red);    border-color: #da363355; }
+.badge.grey   { background: #6e768122; color: var(--muted);  border-color: #6e768155; }
+
+/* ==================== 表单基础 ==================== */
+label.field { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted); }
+label.field > span { display: flex; align-items: center; gap: 6px; }
+label.field > span .tail { margin-left: auto; color: var(--muted-2); font-size: 11px; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+input[type=text], input[type=number], input[type=password], select, textarea {
+  width: 100%; padding: 8px 10px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 7px; font-size: 13px;
+  font-family: inherit; outline: none; transition: border-color .12s, box-shadow .12s;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent-dim); box-shadow: 0 0 0 3px #1f6feb22;
+}
+input[type=number] { -moz-appearance: textfield; font-variant-numeric: tabular-nums; }
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+textarea { font-family: var(--mono); font-size: 12px; resize: vertical; min-height: 62px; }
+
+select {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2.5 4.5L6 8l3.5-3.5' fill='none' stroke='%238b949e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center;
+  padding-right: 30px;
+}
+select option { background: var(--panel-2); color: var(--text); }
+
+/* ==================== 分段控件（替代下拉） ==================== */
+.seg {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  gap: 3px; padding: 3px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 9px;
+}
+.seg > button {
+  padding: 7px 6px; border: none; background: transparent; color: var(--muted);
+  border-radius: 6px; font-size: 12.5px; font-family: inherit; cursor: pointer;
+  transition: all .13s; display: flex; flex-direction: column; align-items: center;
+  gap: 1px; line-height: 1.25;
+}
+.seg > button em {
+  font-style: normal; font-size: 10px; color: var(--muted-2); font-weight: 400;
+}
+.seg > button:hover { color: var(--text); background: var(--panel-2); }
+.seg > button.on {
+  background: var(--accent-dim); color: #fff; font-weight: 600;
+  box-shadow: 0 1px 3px #0006;
+}
+.seg > button.on em { color: #cfe4ff; }
+.seg.mini > button { padding: 4px 10px; font-size: 11.5px; }
+.seg.mini { display: inline-grid; }
+/* 4 个选项时排成 2×2，比横向挤压可读 */
+.seg.grid2 { grid-auto-flow: row; grid-template-columns: 1fr 1fr; }
+.seg.grid2 > button { align-items: flex-start; padding: 8px 10px; text-align: left; }
+.seg.grid2 > button em { font-family: var(--mono); font-size: 10px; }
+
+/* ==================== 开关 ==================== */
+.switch {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  font-size: 12.5px; color: var(--text); user-select: none;
+}
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch .track {
+  flex: none; width: 34px; height: 19px; border-radius: 999px;
+  background: var(--panel-3); border: 1px solid var(--border-2);
+  position: relative; transition: all .16s; margin-top: 1px;
+}
+.switch .track::after {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px;
+  border-radius: 50%; background: var(--muted); transition: all .16s;
+}
+.switch input:checked + .track { background: var(--accent-dim); border-color: var(--accent-dim); }
+.switch input:checked + .track::after { left: 17px; background: #fff; }
+.switch input:focus-visible + .track { box-shadow: 0 0 0 3px #1f6feb33; }
+.switch .txt { line-height: 1.45; }
+.switch .txt small { display: block; color: var(--muted-2); font-size: 11px; }
+
+/* ==================== 数字步进器 ==================== */
+.stepper {
+  display: flex; align-items: stretch; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 7px; overflow: hidden;
+  transition: border-color .12s, box-shadow .12s;
+}
+.stepper:focus-within { border-color: var(--accent-dim); box-shadow: 0 0 0 3px #1f6feb22; }
+.stepper input {
+  border: none !important; background: transparent !important;
+  box-shadow: none !important; border-radius: 0 !important;
+  text-align: center; padding: 8px 2px; flex: 1; min-width: 0;
+}
+.stepper button {
+  border: none; background: transparent; color: var(--muted-2);
+  width: 26px; padding: 0; font-size: 14px; line-height: 1; cursor: pointer;
+  border-radius: 0; transition: all .12s; flex: none;
+}
+.stepper button:hover { background: var(--panel-3); color: var(--text); }
+.stepper button:active { background: var(--accent-dim); color: #fff; }
+.stepper .unit {
+  display: flex; align-items: center; padding: 0 9px 0 2px;
+  font-size: 11px; color: var(--muted-2); white-space: nowrap;
+}
+
+/* ==================== 预设胶囊 ==================== */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 5px 11px; border-radius: 999px; font-size: 12px; cursor: pointer;
+  background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+  transition: all .13s; font-family: inherit; white-space: nowrap;
+}
+.chip:hover { color: var(--text); border-color: var(--border-2); }
+.chip.on {
+  background: #1f6feb22; border-color: var(--accent-dim); color: var(--accent);
+  font-weight: 600;
+}
+
+/* ==================== 按钮 ==================== */
+button {
+  padding: 8px 14px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--text); cursor: pointer;
+  font-size: 13px; font-family: inherit; transition: all .12s; white-space: nowrap;
+}
+button:hover:not(:disabled) { border-color: var(--border-2); background: var(--panel-3); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #388bfd; border-color: #388bfd; }
+button.danger { background: #da3633; border-color: #da3633; color: #fff; font-weight: 600; }
+button.danger:hover:not(:disabled) { background: #f85149; border-color: #f85149; }
+button.ghost { background: transparent; }
+button.sm { padding: 5px 10px; font-size: 12px; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.hint { font-size: 11px; color: var(--muted); line-height: 1.6; }
+.hint code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px;
+             font-family: var(--mono); font-size: 11px; color: var(--accent); }
+.divider { border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+
+/* ==================== 配置档案条 ==================== */
+.profile-bar { display: flex; gap: 6px; align-items: stretch; }
+.profile-bar select { flex: 1; min-width: 0; }
+.profile-bar button {
+  flex: none; width: 32px; padding: 0; font-size: 13px;
+  display: grid; place-items: center; line-height: 1;
+}
+.profile-bar button.del:hover:not(:disabled) {
+  border-color: #da3633; color: var(--red); background: #da363318;
+}
+
+.save-state {
+  font-size: 11px; color: var(--muted-2); display: flex; align-items: center;
+  gap: 6px; margin-top: -4px; min-height: 15px;
+}
+.save-state.dirty { color: var(--amber); }
+.save-state.warn  { color: var(--red); }
+
+.btn-row .spacer { flex: 1; }
+.btn-row.subtle { opacity: .8; }
+.btn-row.subtle button { font-size: 11.5px; padding: 5px 9px; }
+
+/* ==================== 模型列表 ==================== */
+.search { position: relative; }
+.search input { padding-left: 30px; }
+.search::before {
+  content: "⌕"; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--muted-2); font-size: 14px; pointer-events: none;
+}
+.model-list {
+  max-height: 280px; overflow-y: auto; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg);
+}
+.model-head {
+  display: grid; grid-template-columns: 26px minmax(0,1fr) 74px 88px;
+  gap: 6px; padding: 6px 10px; position: sticky; top: 0; z-index: 2;
+  background: var(--panel-2); border-bottom: 1px solid var(--border);
+  font-size: 10.5px; color: var(--muted-2);
+}
+.model-head .c { text-align: center; }
+.model-item {
+  display: grid; grid-template-columns: 26px minmax(0,1fr) 74px 88px;
+  gap: 6px; align-items: center; padding: 5px 10px;
+  border-bottom: 1px solid #1a1f27; font-size: 12.5px; cursor: pointer;
+  transition: background .1s;
+}
+.model-item:last-child { border-bottom: none; }
+.model-item:hover { background: var(--panel-2); }
+.model-item.on { background: #1f6feb14; }
+.model-item .tick {
+  width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--border-2);
+  display: grid; place-items: center; font-size: 10px; color: transparent;
+  transition: all .13s; margin-left: 3px;
+}
+.model-item.on .tick { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+.model-item .name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 12px; color: var(--muted);
+}
+.model-item.on .name { color: var(--text); }
+.model-item input[type=number] {
+  padding: 3px 4px; font-size: 11.5px; text-align: center; height: 26px;
+  background: var(--panel); border-color: #232932;
+}
+.model-item input[type=number]:disabled { opacity: .35; }
+.model-empty { padding: 18px 14px; color: var(--muted-2); font-size: 12px; text-align: center; }
+
+/* 手动添加模型 ID */
+.add-model { display: flex; gap: 6px; }
+.add-model input { flex: 1; min-width: 0; font-family: var(--mono); font-size: 12px; }
+.add-model button { flex: none; }
+
+/* 批量启动：配置勾选列表 */
+.batch-item { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.batch-item:last-child { border-bottom: none; }
+.batch-item .txt { font-size: 12.5px; min-width: 0; }
+.batch-item .txt small { font-size: 11px; }
+.batch-item.blocked { opacity: .55; cursor: not-allowed; }
+.batch-item .block-reason { color: var(--red); }
+.batch-item.blocked .track { background: var(--panel-3); border-color: var(--border); }
+.batch-item.blocked input:checked + .track::after { left: 2px; background: var(--muted); }
+#batchResult { white-space: pre-line; }
+#batchResult.err { color: var(--red); }
+#batchResult.warn { color: var(--amber); }
+#batchResult.ok { color: var(--green); }
+
+/* ==================== 速率主卡 ==================== */
+.hero {
+  display: grid; grid-template-columns: minmax(0,1fr) 180px;
+  gap: 16px; align-items: center;
+  background: linear-gradient(135deg, #161b22 0%, #131a24 100%);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px 20px;
+}
+@media (max-width: 640px) { .hero { grid-template-columns: 1fr; } }
+.hero .label {
+  font-size: 11.5px; color: var(--muted); display: flex; align-items: center;
+  gap: 7px; margin-bottom: 2px;
+}
+.hero .label .spacer { flex: 1; }
+.hero .label .seg.mini { grid-auto-columns: auto; }
+.hero .label .seg.mini > button { padding: 3px 9px; font-size: 11px; }
+.hero .value {
+  font-size: 42px; font-weight: 680; letter-spacing: -1.6px; line-height: 1.05;
+  font-variant-numeric: tabular-nums; transition: color .3s;
+  display: flex; align-items: baseline; gap: 8px;
+}
+.hero .value .u { font-size: 14px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+.hero .sub {
+  display: flex; gap: 18px; margin-top: 8px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted);
+}
+.hero .sub b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.hero .spark-box { position: relative; }
+.hero .spark-box canvas { width: 100%; height: 62px; display: block; }
+.hero .spark-cap {
+  font-size: 10.5px; color: var(--muted-2); text-align: right; margin-top: 2px;
+}
+
+/* 速率分档配色 */
+.lv-idle { color: var(--muted); }
+.lv-low  { color: var(--amber); }
+.lv-mid  { color: var(--accent); }
+.lv-high { color: var(--green); }
+
+/* ==================== 指标卡 ==================== */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 12px; }
+.stat {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 13px 15px;
+}
+.stat .k { font-size: 11.5px; color: var(--muted); margin-bottom: 5px; }
+.stat .v {
+  font-size: 21px; font-weight: 650; font-variant-numeric: tabular-nums;
+  letter-spacing: -.4px;
+}
+.stat .s { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.stat.accent .v { color: var(--accent); }
+.stat.green  .v { color: var(--green); }
+.stat.amber  .v { color: var(--amber); }
+.stat.red    .v { color: var(--red); }
+
+/* ==================== 进度条 ==================== */
+.bar { height: 7px; border-radius: 4px; background: var(--panel-2); overflow: hidden; margin-top: 8px; }
+.bar > i {
+  display: block; height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, #238636, var(--green));
+  transition: width .4s ease;
+}
+.bar.warn > i { background: linear-gradient(90deg, #9e6a03, var(--amber)); }
+.bar.hot  > i { background: linear-gradient(90deg, #da3633, var(--red)); }
+
+/* ==================== 趋势图 ==================== */
+.chart-wrap { position: relative; }
+.chart-wrap canvas { width: 100%; display: block; cursor: crosshair; }
+.chart-tip {
+  position: absolute; pointer-events: none; opacity: 0; transition: opacity .12s;
+  background: #0a0d12f2; border: 1px solid var(--border-2); border-radius: 7px;
+  padding: 7px 10px; font-size: 11.5px; line-height: 1.65; white-space: nowrap;
+  box-shadow: 0 6px 20px #000a; z-index: 5;
+}
+.chart-tip .tt { color: var(--muted); }
+.chart-tip .tv { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart-tip .tv.g { color: var(--green); }
+.chart-legend {
+  display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  font-size: 11.5px; color: var(--muted); margin-top: 8px;
+}
+.chart-legend i {
+  display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+  margin-right: 5px; vertical-align: -1px;
+}
+
+/* ==================== 首次使用引导 ==================== */
+.first-run {
+  border: 1px solid var(--accent-dim); border-radius: 9px;
+  background: linear-gradient(180deg, #1f6feb1a, #1f6feb08);
+  padding: 11px 13px; margin-bottom: 12px;
+}
+.first-run .fr-title { font-size: 12.5px; font-weight: 600; color: var(--accent); }
+.first-run ol { margin: 7px 0 0; padding-left: 18px; }
+.first-run li { font-size: 12px; line-height: 1.75; color: var(--muted); }
+.first-run li b { color: var(--text); font-weight: 600; }
+.first-run .fr-note { font-size: 11px; color: var(--muted-2); margin-top: 7px; }
+
+/* ==================== 会话列表 ==================== */
+.sess {
+  display: grid; grid-template-columns: minmax(0,1fr) auto auto;
+  gap: 10px; align-items: center;
+  padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); margin-bottom: 7px;
+}
+.sess:last-child { margin-bottom: 0; }
+.sess.done { opacity: .55; }
+.sess-name {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sess-meta {
+  font-size: 11px; color: var(--muted-2); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sess-stats {
+  display: flex; gap: 16px; font-size: 11.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.sess-stats b { color: var(--text); font-weight: 600; }
+.sess-empty { padding: 14px; text-align: center; color: var(--muted-2); font-size: 12px; }
+
+/* ==================== 日志 ==================== */
+.logs {
+  background: #0a0d12; border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; height: 208px; overflow-y: auto;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.75;
+}
+.logs div { white-space: pre-wrap; word-break: break-all; }
+.logs .t { color: #4d5560; }
+.logs .warn { color: var(--amber); }
+.logs .error { color: var(--red); }
+.logs .info { color: #a8b3bf; }
+
+/* ==================== 表格 ==================== */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 7px 9px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 11px; position: sticky; top: 0; background: var(--panel); }
+tbody tr:hover { background: var(--panel-2); }
+td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+.scroll { max-height: 300px; overflow: auto; }
+
+/* ==================== 提示 ==================== */
+#toast { position: fixed; right: 20px; bottom: 20px; z-index: 100;
+         display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+#toast > div {
+  background: var(--panel-3); border: 1px solid var(--border); border-left-width: 3px;
+  border-radius: 8px; padding: 10px 14px; font-size: 13px; max-width: 440px;
+  box-shadow: 0 8px 26px #0009; animation: slide .2s ease; white-space: pre-wrap;
+}
+#toast .ok   { border-left-color: var(--green); }
+#toast .err  { border-left-color: var(--red); }
+#toast .warn { border-left-color: var(--amber); }
+@keyframes slide { from { opacity: 0; transform: translateX(18px); } }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot.idle { background: var(--muted-2); }
+.dot.running { background: var(--green); box-shadow: 0 0 0 3px #3fb95026; animation: pulse 1.6s infinite; }
+.dot.waiting { background: var(--amber); animation: pulse 1.6s infinite; }
+.dot.done { background: var(--accent); }
+.dot.error { background: var(--red); }
+@keyframes pulse { 50% { opacity: .35; } }
+
+.kv { display: flex; justify-content: space-between; font-size: 12px;
+      padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.kv:last-child { border-bottom: none; }
+.kv .v { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2b323c; border-radius: 5px; }
+::-webkit-scrollbar-thumb:hover { background: #3a424e; }
+
+</style>
+</head>
+<body>
+
+<header>
+  <span class="logo">◆</span>
+  <h1>TokenFurnace</h1>
+  <span class="badge grey" id="verBadge">v1.0</span>
+  <span class="meta" id="profileMeta">—</span>
+  <span class="spacer"></span>
+  <span class="meta" id="statusText"><span class="dot idle"></span> 空闲</span>
+  <button class="primary" id="btnStart">▶ 用当前配置开始消费</button>
+  <button class="danger" id="btnStop" disabled>■ 全部停止</button>
+</header>
+
+<div class="layout">
+
+  <!-- ==================== 左：配置 ==================== -->
+  <div class="col">
+
+    <details class="panel" open>
+      <summary>① 连接配置<span class="badge blue" id="connBadge">未测试</span></summary>
+      <div class="body">
+        <div id="firstRun"></div>
+
+        <div class="profile-bar">
+          <select id="profileSel" title="切换配置档案"></select>
+          <button class="sm ghost" id="btnNewProf" title="新建配置">＋</button>
+          <button class="sm ghost" id="btnDupProf" title="复制当前配置">⧉</button>
+          <button class="sm ghost del" id="btnDelProf" title="删除当前配置">✕</button>
+        </div>
+        <div class="save-state" id="saveState"></div>
+
+        <hr class="divider">
+
+        <label class="field"><span>名称</span><input type="text" id="profName"></label>
+
+        <label class="field"><span>接口协议</span></label>
+        <div class="seg grid2" id="protoSeg">
+          <button data-v="anthropic">Anthropic Messages<em>/v1/messages</em></button>
+          <button data-v="openai-chat">OpenAI Chat<em>/v1/chat/completions</em></button>
+          <button data-v="openai-responses">OpenAI Responses<em>/v1/responses</em></button>
+          <button data-v="gemini">Gemini Native<em>:generateContent</em></button>
+        </div>
+        <input type="hidden" id="protocol" value="openai-chat">
+
+        <label class="field"><span>认证字段<span class="tail">凭证放在哪个请求头</span></span>
+          <select id="authStyle"></select>
+        </label>
+        <div class="hint" id="authHint"></div>
+
+        <label class="field">
+          <span>Base URL<span class="tail">填根地址，版本段自动补</span></span>
+          <input type="text" id="baseUrl" placeholder="https://api.example.com">
+        </label>
+
+        <label class="field"><span>密钥来源</span></label>
+        <div class="seg" id="keySourceSeg">
+          <button data-v="inline">直接填写</button>
+          <button data-v="env">环境变量</button>
+          <button data-v="file">文件路径</button>
+        </div>
+        <input type="hidden" id="keySource" value="inline">
+        <label class="field"><span id="keyLabel">API Key</span>
+          <input type="text" id="keyValue" placeholder="sk-...">
+        </label>
+        <div class="hint" id="keyHint"></div>
+
+        <hr class="divider">
+
+        <div class="btn-row">
+          <button class="sm" id="btnTest">测试连接</button>
+          <button class="sm" id="btnModels">拉取模型</button>
+          <span class="spacer"></span>
+          <button class="sm primary" id="btnSave">保存</button>
+        </div>
+        <div class="btn-row subtle">
+          <button class="sm ghost" id="btnImportCfg">导入配置…</button>
+          <button class="sm ghost" id="btnExportCfg">导出全部配置</button>
+          <input type="file" id="importFile" accept=".json" hidden>
+        </div>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>② 模型选择<span class="badge blue" id="modelBadge">0 个</span></summary>
+      <div class="body">
+        <div class="search"><input type="text" id="modelFilter" placeholder="搜索模型名…"></div>
+        <div class="hint">点行切换勾选。权重决定分流概率，积分/1K 留空用全局值。</div>
+        <div class="model-list" id="modelList"></div>
+        <div class="btn-row">
+          <button class="sm ghost" id="btnSelAll">勾选可见</button>
+          <button class="sm ghost" id="btnSelNone">取消可见</button>
+          <button class="sm ghost" id="btnSelClear">清空全部</button>
+        </div>
+        <div class="add-model">
+          <input type="text" id="newModel" placeholder="列表里没有？手动填模型 ID">
+          <button class="sm ghost" id="btnAddModel">添加</button>
+        </div>
+        <div class="hint" id="pickHint"></div>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>③ 消费策略</summary>
+      <div class="body">
+        <label class="field"><span>消耗模式<span class="tail" id="modeTail"></span></span></label>
+        <div class="seg" id="modeSeg">
+          <button data-v="prefill">预填充<em>快 80 倍</em></button>
+          <button data-v="decode">生成<em>最慢</em></button>
+          <button data-v="mixed">混合<em>更自然</em></button>
+        </div>
+        <input type="hidden" id="modeSel" value="prefill">
+
+        <div class="row">
+          <label class="field"><span>并发数<span class="tail">超过 4 易触发限流</span></span>
+            <div class="stepper" data-min="1" data-max="64" data-step="1">
+              <button data-d="-1">−</button><input type="number" id="concurrency"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>单请求超时</span>
+            <div class="stepper" data-min="10" data-max="900" data-step="10">
+              <button data-d="-1">−</button><input type="number" id="timeout"><span class="unit">秒</span><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <label class="field"><span>单请求输入规模<span class="tail" id="inputHint"></span></span>
+          <div class="stepper" data-min="1000" data-max="520000" data-step="20000">
+            <button data-d="-1">−</button><input type="number" id="inputChars"><span class="unit">字符</span><button data-d="1">+</button>
+          </div>
+        </label>
+
+        <div class="row">
+          <label class="field"><span>最大输出</span>
+            <div class="stepper" data-min="1" data-max="65536" data-step="64">
+              <button data-d="-1">−</button><input type="number" id="maxTokens"><span class="unit">tok</span><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>思考强度</span>
+            <select id="reasoning">
+              <option value="none">none · 最快</option>
+              <option value="low">low</option>
+              <option value="medium">medium</option>
+              <option value="high">high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="row">
+          <label class="field"><span>失败重试</span>
+            <div class="stepper" data-min="1" data-max="20" data-step="1">
+              <button data-d="-1">−</button><input type="number" id="retry"><span class="unit">次</span><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>安全余量</span>
+            <div class="stepper" data-min="0.5" data-max="1" data-step="0.01">
+              <button data-d="-1">−</button><input type="number" id="safety"><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <label class="switch"><input type="checkbox" id="cacheBust"><span class="track"></span>
+          <span class="txt">击穿 prefix 缓存
+            <small>每次请求重新生成随机文本，避免命中缓存被打折计费</small></span></label>
+
+        <div class="hint" id="estHint"></div>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>④ 额度与时长</summary>
+      <div class="body">
+        <div class="hint">任一上限触顶即自动停止。<b>0 表示不限</b>。</div>
+        <div class="row">
+          <label class="field"><span>积分上限</span>
+            <div class="stepper" data-min="0" data-max="10000000" data-step="5000">
+              <button data-d="-1">−</button><input type="number" id="maxPoints"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>token 上限</span>
+            <div class="stepper" data-min="0" data-max="10000000000" data-step="1000000">
+              <button data-d="-1">−</button><input type="number" id="maxTokensCap"><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+        <div class="row">
+          <label class="field"><span>请求数上限</span>
+            <div class="stepper" data-min="0" data-max="1000000" data-step="10">
+              <button data-d="-1">−</button><input type="number" id="maxRequests"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>运行时长</span>
+            <div class="stepper" data-min="0" data-max="1440" data-step="5">
+              <button data-d="-1">−</button><input type="number" id="duration"><span class="unit">分</span><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <hr class="divider">
+
+        <label class="switch"><input type="checkbox" id="enforceWin"><span class="track"></span>
+          <span class="txt">滚动窗口限流
+            <small>按 5 小时 / 周两个滑动窗口限制用量，撞墙自动等待</small></span></label>
+
+        <div class="row">
+          <label class="field"><span>5 小时额度</span>
+            <div class="stepper" data-min="0" data-max="10000000" data-step="10000">
+              <button data-d="-1">−</button><input type="number" id="limit5h"><button data-d="1">+</button>
+            </div>
+          </label>
+          <label class="field"><span>周额度</span>
+            <div class="stepper" data-min="0" data-max="100000000" data-step="100000">
+              <button data-d="-1">−</button><input type="number" id="limitWeek"><button data-d="1">+</button>
+            </div>
+          </label>
+        </div>
+
+        <label class="field"><span>换算系数<span class="tail">积分 / 1K tokens</span></span>
+          <div class="stepper" data-min="0" data-max="1000" data-step="0.1">
+            <button data-d="-1">−</button><input type="number" id="ppk" step="0.0001"><button data-d="1">+</button>
+            <button id="btnCalib" style="width:auto;padding:0 9px;font-size:11px">反推</button>
+          </div>
+        </label>
+
+        <label class="switch"><input type="checkbox" id="loop"><span class="track"></span>
+          <span class="txt">挂机模式
+            <small>撞额度后等待窗口滑出并自动续跑</small></span></label>
+      </div>
+    </details>
+
+    <details class="panel" open>
+      <summary>⑤ 批量启动<span class="badge grey" id="batchBadge">未选</span></summary>
+      <div class="body">
+        <div class="hint">勾选多个配置一次全部启动，不用来回切换。每个会话用各自的密钥、模型和额度；
+          策略参数（模式、并发、预算）取上面这一份。</div>
+        <div id="batchList"></div>
+        <div class="btn-row">
+          <button class="sm primary" id="btnBatchStart">启动选中的配置</button>
+          <button class="sm ghost" id="btnBatchClear">清空选择</button>
+        </div>
+        <div class="hint" id="batchResult"></div>
+      </div>
+    </details>
+
+  </div>
+
+  <!-- ==================== 右：看板 ==================== -->
+  <div class="col">
+
+    <div class="hero">
+      <div>
+        <div class="label">实时消耗速率
+          <span class="spacer"></span>
+          <div class="seg mini" id="winSeg"
+               title="统计窗口越短越灵敏。注意：预填充模式下单个请求要 20~40 秒，5 秒窗口会间歇性归零">
+            <button data-v="5">5 秒</button>
+            <button data-v="10">10 秒</button>
+            <button data-v="20">20 秒</button>
+            <button data-v="60">60 秒</button>
+          </div>
+        </div>
+        <div class="value lv-idle" id="sRate">0<span class="u">tokens/秒</span></div>
+        <div class="sub">
+          <span>平均 <b id="sRateAvg">0</b> tok/s</span>
+          <span>峰值 <b id="sRatePeak">0</b> tok/s</span>
+          <span>吞吐 <b id="sRps">0</b> 请求/秒</span>
+        </div>
+        <div class="hint" id="rateWinNote"></div>
+      </div>
+      <div class="spark-box">
+        <canvas id="spark" height="62"></canvas>
+        <div class="spark-cap">最近 200 秒</div>
+      </div>
+    </div>
+
+    <div class="panel open" id="sessPanel">
+      <div class="head">运行中的会话<span class="badge grey" id="sessBadge">0</span>
+        <span class="spacer"></span>
+        <span class="meta" id="sessWorkers">并发 0 / 32</span>
+      </div>
+      <div class="body"><div id="sessList"></div></div>
+    </div>
+
+    <div class="stats">
+      <div class="stat accent"><div class="k">已消耗 tokens</div><div class="v" id="sTokens">0</div>
+        <div class="s" id="sTokensSub">输入 0 · 输出 0</div></div>
+      <div class="stat green"><div class="k">预估消耗积分</div><div class="v" id="sPoints">—</div>
+        <div class="s" id="sPointsSub">需填换算系数</div></div>
+      <div class="stat"><div class="k">请求数</div><div class="v" id="sReq">0</div>
+        <div class="s" id="sReqSub">成功 0 · 失败 0</div></div>
+      <div class="stat"><div class="k">运行时长</div><div class="v" id="sElapsed">00:00</div>
+        <div class="s" id="sLeft">未设上限</div></div>
+      <div class="stat amber"><div class="k">缓存命中</div><div class="v" id="sCached">0</div>
+        <div class="s">应为 0，非 0 说明被缓存折扣</div></div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">消耗趋势
+        <span class="badge grey" id="chartBadge">10 秒粒度</span>
+        <span class="spacer"></span>
+        <div class="seg mini" id="rangeSeg">
+          <button data-v="live" class="on">近 5 分钟</button>
+          <button data-v="all">全部</button>
+        </div>
+      </div>
+      <div class="body">
+        <div class="chart-wrap">
+          <canvas id="chart" height="170"></canvas>
+          <div class="chart-tip" id="chartTip"></div>
+        </div>
+        <div class="chart-legend">
+          <span><i style="background:#3fb950"></i>瞬时速率 (tok/s)</span>
+          <span><i style="background:#1f6feb"></i>累计 tokens</span>
+          <span id="chartStat" style="margin-left:auto"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">滚动窗口占用<span class="badge grey" id="winBadge">未启用</span></div>
+      <div class="body">
+        <div>
+          <div class="kv"><span>5 小时窗口</span><span class="v" id="w5Text">—</span></div>
+          <div class="bar" id="w5Bar"><i style="width:0%"></i></div>
+        </div>
+        <div style="margin-top:6px">
+          <div class="kv"><span>周窗口</span><span class="v" id="wWText">—</span></div>
+          <div class="bar" id="wWBar"><i style="width:0%"></i></div>
+        </div>
+        <div class="kv" id="waitRow" style="display:none">
+          <span>等待中</span><span class="v" id="waitText">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">运行日志</div>
+      <div class="body"><div class="logs" id="logs"></div></div>
+    </div>
+
+    <div class="panel open">
+      <div class="head">历史会话
+        <span class="badge grey" id="histBadge">0</span>
+        <span class="spacer"></span>
+        <button class="sm ghost" id="btnExpReq">导出请求明细 CSV</button>
+        <button class="sm ghost" id="btnExpRun">导出会话汇总 CSV</button>
+      </div>
+      <div class="body">
+        <div class="scroll">
+          <table>
+            <thead><tr>
+              <th>开始</th><th>配置</th><th>模型</th><th>状态</th>
+              <th style="text-align:right">请求</th><th style="text-align:right">失败</th>
+              <th style="text-align:right">tokens</th><th></th>
+            </tr></thead>
+            <tbody id="histBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+/* 静态预览：拦截 fetch 返回演示数据。界面代码本身是真实文件，未做任何改动。 */
+(function () {
+  const DEMO = {"version": "0.1.0", "server_time": 1789982235.2124264, "uptime": 3820, "active_profile": "demo", "active_profile_name": "主力端点", "active_has_key": true, "config": {"version": 2, "active_profile": "demo", "ui": {"poll_ms": 1000}, "profiles": [{"id": "demo", "name": "主力端点", "protocol": "anthropic", "base_url": "https://relay.example.com", "headers": {}, "auth": {"source": "env", "value": "", "ref": "MY_LLM_API_KEY", "style": "x-api-key", "has_key": true, "masked": "sk-ant********9f2c"}, "models": ["model-large", "model-standard", "model-fast"], "selected": [{"id": "model-large", "weight": 3, "points_per_1k": 0}, {"id": "model-fast", "weight": 1, "points_per_1k": 0}], "limits": {"window_5h": 60000, "week": 600000, "unit": "points"}, "points_per_1k": 1.4, "note": ""}, {"id": "gw", "name": "自建网关", "protocol": "openai-chat", "base_url": "https://gateway.internal/v1", "headers": {}, "auth": {"source": "inline", "value": "sk-gw1********7ab3", "ref": "", "style": "bearer", "has_key": true, "masked": "sk-gw1********7ab3"}, "models": ["gpt-4o", "gpt-4o-mini"], "selected": [], "limits": {"window_5h": 0, "week": 0, "unit": "usd"}, "points_per_1k": 0, "note": ""}, {"id": "gm", "name": "Gemini 直连", "protocol": "gemini", "base_url": "https://generativelanguage.googleapis.com", "headers": {}, "auth": {"source": "env", "value": "", "ref": "GEMINI_API_KEY", "style": "x-goog-api-key", "has_key": false, "masked": ""}, "models": [], "selected": [], "limits": {"window_5h": 0, "week": 0, "unit": "tokens"}, "points_per_1k": 0, "note": ""}], "engine_defaults": {"mode": "prefill", "concurrency": 4, "input_chars": 380000, "max_tokens": 8, "reasoning_effort": "none", "cache_bust": true, "timeout": 180, "retry": 5, "safety_ratio": 0.97, "instant_window": 20, "max_points": 60000, "max_total_tokens": 0, "max_requests": 0, "duration_min": 60, "enforce_windows": true, "points_per_1k": 1.4, "loop": true}}, "presets": {}, "protocols": {"anthropic": {"label": "Anthropic Messages", "short": "Anthropic", "auth": "x-api-key", "hint": "端点暴露 /v1/messages"}, "openai-chat": {"label": "OpenAI Chat Completions", "short": "Chat", "auth": "bearer", "hint": "端点暴露 /v1/chat/completions"}, "openai-responses": {"label": "OpenAI Responses API", "short": "Responses", "auth": "bearer", "hint": "端点暴露 /v1/responses"}, "gemini": {"label": "Gemini Native generateContent", "short": "Gemini", "auth": "x-goog-api-key", "hint": "端点暴露 /v1beta/models/{model}:generateContent"}}, "auth_styles": {"bearer": {"label": "Authorization: Bearer", "hint": "OpenAI 系。Anthropic 生态里对应 ANTHROPIC_AUTH_TOKEN"}, "x-api-key": {"label": "x-api-key", "hint": "Anthropic 系。Anthropic 生态里对应 ANTHROPIC_API_KEY"}, "x-goog-api-key": {"label": "x-goog-api-key", "hint": "Google Gemini 系"}}, "modes": {"prefill": "预填充（大输入 + 极短输出）· 最快", "decode": "生成（小输入 + 长输出）· 最慢", "mixed": "混合（预填充为主，穿插生成）"}, "windows": {"h5": 18000, "week": 604800}, "totals": {"tokens": 42840000, "requests": 240}, "live": {"status": "running", "run_id": "demo0a1b2c3d", "started": 1789980388.2124264, "ended": 0, "requests": 240, "ok": 232, "failed": 8, "prompt_tokens": 42765400, "completion_tokens": 74600, "cached_tokens": 0, "points": 59872.4, "rate_instant": 17262.1, "rate": 23180.0, "rate_peak": 18422.8, "errors": {"rps": 6, "timeout": 2}, "by_model": {"model-large": {"requests": 174, "tokens": 31020000, "points": 43428.0}, "model-fast": {"requests": 66, "tokens": 11720000, "points": 16440.4}}, "wait_until": 0, "wait_reason": "", "stop_reason": "", "last_error": "", "per_minute": [{"t": 1789980840, "tokens": 427638}, {"t": 1789980900, "tokens": 275484}, {"t": 1789980960, "tokens": 265350}, {"t": 1789981020, "tokens": 158412}, {"t": 1789981080, "tokens": 130038}, {"t": 1789981140, "tokens": 130356}, {"t": 1789981200, "tokens": 95358}, {"t": 1789981260, "tokens": 79200}, {"t": 1789981320, "tokens": 103740}, {"t": 1789981380, "tokens": 72000}, {"t": 1789981440, "tokens": 72000}, {"t": 1789981500, "tokens": 72000}, {"t": 1789981560, "tokens": 72000}, {"t": 1789981620, "tokens": 72000}, {"t": 1789981680, "tokens": 1112406}, {"t": 1789981740, "tokens": 1116000}, {"t": 1789981800, "tokens": 993138}, {"t": 1789981860, "tokens": 38598}, {"t": 1789981920, "tokens": 49968}, {"t": 1789981980, "tokens": 1030445}, {"t": 1789982040, "tokens": 1116000}, {"t": 1789982100, "tokens": 1116000}, {"t": 1789982160, "tokens": 1093098}, {"t": 1789982220, "tokens": 864660}], "recent": [], "spark": [10692.9, 5749.2, 3967.9, 17426.8, 17161.1, 15926.6, 14811.1, 446.5, 1200.0, 1200.0, 1200.0, 1200.0, 235.6, 358.7, 510.9, 1200.0, 1200.0, 16341.5, 11804.2, 16832.1, 11039.8, 9532.6, 13548.3, 12939.6, 8407.2, 4719.8, 4218.1, 977.9, 18005.6, 14368.0, 9528.1, 7708.9, 5683.2, 5633.4, 4762.3, 18125.4, 18422.8, 11937.8, 10119.7, 17262.1], "series": [{"t": 1789981940, "tokens": 13795}, {"t": 1789981950, "tokens": 12000}, {"t": 1789981960, "tokens": 18155}, {"t": 1789981970, "tokens": 13915}, {"t": 1789981980, "tokens": 12000}, {"t": 1789981990, "tokens": 169358}, {"t": 1789982000, "tokens": 90779}, {"t": 1789982010, "tokens": 56353}, {"t": 1789982020, "tokens": 67498}, {"t": 1789982030, "tokens": 59676}, {"t": 1789982040, "tokens": 48950}, {"t": 1789982050, "tokens": 167841}, {"t": 1789982060, "tokens": 94028}, {"t": 1789982070, "tokens": 65029}, {"t": 1789982080, "tokens": 16350}, {"t": 1789982090, "tokens": 18559}, {"t": 1789982100, "tokens": 14607}, {"t": 1789982110, "tokens": 12000}, {"t": 1789982120, "tokens": 14347}, {"t": 1789982130, "tokens": 12000}, {"t": 1789982140, "tokens": 12000}, {"t": 1789982150, "tokens": 12000}, {"t": 1789982160, "tokens": 12000}, {"t": 1789982170, "tokens": 12000}, {"t": 1789982180, "tokens": 9527}, {"t": 1789982190, "tokens": 12000}, {"t": 1789982200, "tokens": 12000}, {"t": 1789982210, "tokens": 12000}, {"t": 1789982220, "tokens": 12000}, {"t": 1789982230, "tokens": 12000}], "elapsed": 1847, "total_tokens": 42840000, "rps": 0.13, "running": true, "session_count": 2, "workers_in_use": 8, "max_total_workers": 32, "sessions": [{"sid": "demo0a1b2c3d", "name": "主力端点", "status": "running", "running": true, "protocol": "anthropic", "models": ["model-large", "model-fast"], "mode": "prefill", "concurrency": 4, "rate_instant": 8420.0, "total_tokens": 28400000, "ok": 158, "requests": 163, "elapsed": 1847, "wait_reason": ""}, {"sid": "9c2f7e1a44b8", "name": "自建网关", "status": "waiting", "running": true, "protocol": "openai-chat", "models": ["gpt-4o"], "mode": "prefill", "concurrency": 4, "rate_instant": 4060.0, "total_tokens": 14440000, "ok": 74, "requests": 77, "elapsed": 1204, "wait_reason": "5 小时额度已用满（58,210 / 60,000）"}], "windows": {"tokens_5h": 33893979, "tokens_week": 33981036, "points_5h": 47452.0, "points_week": 47573.5, "limit_5h": 60000, "limit_week": 600000, "enforce": true, "coef_set": true}}, "logs": [{"ts": 1789980388.2124264, "level": "info", "msg": "会话 demo0a1b2c3d 启动 · 2 个模型 · 并发 4 · 模式 预填充（大输入 + 极短输出）· 最快"}, {"ts": 1789980395.2124264, "level": "info", "msg": "连接自检通过：Anthropic Messages · 发现 3 个模型 · 首包 0.42s"}, {"ts": 1789980615.2124264, "level": "warn", "msg": "rps 触发退避 2s（全局）"}, {"ts": 1789980617.2124264, "level": "info", "msg": "退避结束，恢复正常调度"}, {"ts": 1789981055.2124264, "level": "warn", "msg": "timeout 触发退避 35s（全局）"}, {"ts": 1789981090.2124264, "level": "info", "msg": "退避结束，恢复正常调度"}, {"ts": 1789981615.2124264, "level": "info", "msg": "已消耗 30,000,000 tokens · 约 42,000 积分 · 5h 窗口占用 70.1%"}, {"ts": 1789981935.2124264, "level": "warn", "msg": "5 小时额度已用满（58,210 / 60,000），等待 42.3 分钟后继续"}, {"ts": 1789982175.2124264, "level": "info", "msg": "缓存命中 0 tokens，击穿有效"}, {"ts": 1789982230.2124264, "level": "info", "msg": "已消耗 42,840,000 tokens · 约 59,872 积分 · 5h 窗口占用 71.3%"}], "history": [{"id": "demo0a1b2c3d", "started": 1789980388.2124264, "ended": null, "profile": "demo", "profile_name": "主力端点", "models": "model-large,model-fast", "mode": "prefill", "concurrency": 4, "status": "running", "prompt_tokens": 42765400, "completion_tokens": 74600, "requests": 240, "failed": 8, "note": ""}, {"id": "8f31c0a94e21", "started": 1789972635.2124264, "ended": 1789978035.2124264, "profile": "demo", "profile_name": "主力端点", "models": "model-large", "mode": "prefill", "concurrency": 4, "status": "done", "prompt_tokens": 61200000, "completion_tokens": 41000, "requests": 331, "failed": 3, "note": "到达积分上限 60,000"}, {"id": "2b7e5d1180aa", "started": 1789931835.2124264, "ended": 1789935435.2124264, "profile": "gw", "profile_name": "自建网关", "models": "gpt-4o", "mode": "mixed", "concurrency": 6, "status": "done", "prompt_tokens": 18400000, "completion_tokens": 2400000, "requests": 96, "failed": 0, "note": "到达设定时长 60 分钟"}, {"id": "c40a9f2b7e13", "started": 1789809435.2124264, "ended": 1789810335.2124264, "profile": "demo", "profile_name": "主力端点", "models": "model-fast", "mode": "prefill", "concurrency": 4, "status": "interrupted", "prompt_tokens": 4200000, "completion_tokens": 900, "requests": 23, "failed": 1, "note": "服务退出"}]};
+  let tick = 0;
+  const reply = (o) => ({ ok: true, status: 200, json: async () => o });
+  const jitter = (b, s) => Math.max(200, b * (1 + Math.sin(s * 2.7) * 0.45 + Math.sin(s * 11.3) * 0.28));
+  window.fetch = async function (url) {
+    const path = String(url).split('?')[0];
+    if (path === '/api/state') {
+      tick++;
+      const d = JSON.parse(JSON.stringify(DEMO));
+      const grow = tick * 5800;
+      d.live.total_tokens += grow;
+      d.live.prompt_tokens += grow;
+      d.live.requests += Math.floor(tick / 2);
+      d.live.ok += Math.floor(tick / 2);
+      d.live.points = d.live.total_tokens / 1000 * 1.4;
+      d.live.elapsed = DEMO.live.elapsed + tick;
+      d.live.rate = d.live.total_tokens / d.live.elapsed;
+      d.live.rate_instant = jitter(DEMO.live.rate_instant, tick);
+      d.live.rate_peak = Math.max(d.live.rate_peak, d.live.rate_instant);
+      d.live.spark = d.live.spark.slice(1).concat([Math.round(d.live.rate_instant)]);
+      const lastT = d.live.series[d.live.series.length - 1].t;
+      d.live.series = d.live.series.slice(1).concat([
+        { t: lastT + 10, tokens: Math.round(d.live.rate_instant * 10) }]);
+      d.live.windows.points_5h = d.live.total_tokens / 1000 * 1.4 * 0.79;
+      return reply(d);
+    }
+    if (path === '/api/run/detail') {
+      return reply({ ok: true, run: DEMO.history[0], buckets: DEMO.live.per_minute,
+        models: [{ model: 'model-large', n: 174, p: 31020000, c: 41000 },
+                 { model: 'model-fast', n: 66, p: 11720000, c: 33600 }],
+        errors: [{ kind: 'rps', n: 6 }, { kind: 'timeout', n: 2 }] });
+    }
+    if (path === '/api/guess_protocol') return reply({ ok: true, protocol: 'anthropic' });
+    return reply({ ok: true, result: {}, models: [] });
+  };
+  addEventListener('DOMContentLoaded', () => {
+    const bar = document.createElement('div');
+    bar.textContent = '静态预览 · 界面为真实文件渲染，数据为演示数据，不可交互';
+    Object.assign(bar.style, {
+      position: 'fixed', left: '50%', transform: 'translateX(-50%)', bottom: '16px',
+      zIndex: 200, padding: '7px 16px', borderRadius: '999px',
+      background: '#1f6feb22', border: '1px solid #1f6feb66', color: '#58a6ff',
+      fontSize: '12px', backdropFilter: 'blur(6px)', pointerEvents: 'none' });
+    document.body.appendChild(bar);
+  });
+})();
+</script>
+<script>
+/* TokenFurnace 前端 —— 无框架、无构建，纯原生。 */
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+let S = null;                 // 服务端状态
+let dirty = false;            // 用户正在编辑，暂停回填表单
+let modelSig = '';            // 模型列表签名，变了才重建 DOM
+let sel = {};                 // {modelId: {on, weight, ppk}}
+let chartRange = 'live';      // live | all
+let rateWin = 20;             // 即时速率统计窗口（秒）
+// 渲染签名：内容没变就跳过 DOM 重建 / 画布重绘
+let modelStateSig = '';
+let sparkSig = '';
+let hoverIdx = -1;
+let chartCache = null;
+
+/* ==================== 工具函数 ==================== */
+function human(n, digits) {
+  n = Number(n) || 0;
+  const units = ['', 'K', 'M', 'B', 'T'];
+  let i = 0;
+  while (Math.abs(n) >= 1000 && i < units.length - 1) { n /= 1000; i++; }
+  const d = digits === undefined ? (i === 0 ? 0 : 1) : digits;
+  return n.toFixed(d) + units[i];
+}
+function num(n, d = 0) {
+  return (Number(n) || 0).toLocaleString('zh-CN',
+    { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function dur(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
+  const p = (x) => String(x).padStart(2, '0');
+  return h ? `${h}:${p(m)}:${p(s)}` : `${p(m)}:${p(s)}`;
+}
+function hhmm(ts) {
+  const d = new Date(ts * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+function hhmmss(ts) {
+  const d = new Date(ts * 1000);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function toast(msg, kind = 'ok', ms = 4200) {
+  const el = document.createElement('div');
+  el.className = kind; el.textContent = msg;
+  $('toast').appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+async function api(path, body, method = 'POST') {
+  const opt = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body !== undefined) opt.body = JSON.stringify(body);
+  const r = await fetch(path, opt);
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* 非 JSON */ }
+  if (!r.ok || j.ok === false) throw new Error(j.error || `HTTP ${r.status}`);
+  return j;
+}
+
+/* ==================== 分段控件 ==================== */
+const SEG_HIDDEN = {
+  modeSeg: 'modeSel', keySourceSeg: 'keySource',
+  protoSeg: 'protocol',
+};
+
+function setSeg(id, v) {
+  const box = $(id);
+  if (!box) return;
+  [...box.querySelectorAll('button[data-v]')].forEach(b =>
+    b.classList.toggle('on', b.dataset.v === v));
+  const hid = SEG_HIDDEN[id];
+  if (hid) $(hid).value = v;
+}
+function segVal(id) {
+  const b = $(id) && $(id).querySelector('button.on');
+  return b ? b.dataset.v : '';
+}
+function initSeg(id, cb) {
+  const box = $(id);
+  if (!box) return;
+  box.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]');
+    if (!b) return;
+    setSeg(id, b.dataset.v);
+    if (cb) cb(b.dataset.v);
+  });
+}
+
+/* ==================== 数字步进器 ==================== */
+function initSteppers() {
+  document.querySelectorAll('.stepper').forEach(st => {
+    const input = st.querySelector('input');
+    if (!input) return;
+    st.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-d]');
+      if (!b) return;                       // #btnCalib 没有 data-d，自动跳过
+      const min = st.dataset.min !== undefined ? parseFloat(st.dataset.min) : -Infinity;
+      const max = st.dataset.max !== undefined ? parseFloat(st.dataset.max) : Infinity;
+      const step = parseFloat(st.dataset.step || '1');
+      let v = (parseFloat(input.value) || 0) + parseFloat(b.dataset.d) * step;
+      v = Math.min(max, Math.max(min, v));
+      const dec = (String(step).split('.')[1] || '').length;
+      input.value = v.toFixed(dec);
+      dirty = true;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+}
+
+/* ==================== 表单读写 ==================== */
+const NUM_FIELDS = ['concurrency', 'timeout', 'inputChars', 'maxTokens', 'retry', 'safety',
+  'maxPoints', 'maxTokensCap', 'maxRequests', 'duration', 'limit5h', 'limitWeek', 'ppk'];
+
+function readSpec() {
+  return {
+    mode: $('modeSel').value,
+    concurrency: +$('concurrency').value || 1,
+    timeout: +$('timeout').value || 180,
+    input_chars: +$('inputChars').value || 380000,
+    max_tokens: +$('maxTokens').value || 8,
+    reasoning_effort: $('reasoning').value,
+    retry: +$('retry').value || 5,
+    safety_ratio: +$('safety').value || 0.97,
+    instant_window: rateWin,
+    cache_bust: $('cacheBust').checked,
+    max_points: +$('maxPoints').value || 0,
+    max_total_tokens: +$('maxTokensCap').value || 0,
+    max_requests: +$('maxRequests').value || 0,
+    duration_min: +$('duration').value || 0,
+    enforce_windows: $('enforceWin').checked,
+    limit_5h: +$('limit5h').value || 0,
+    limit_week: +$('limitWeek').value || 0,
+    points_per_1k: +$('ppk').value || 0,
+    loop: $('loop').checked,
+    models: Object.entries(sel).filter(([, v]) => v.on).map(([id, v]) => ({
+      id, weight: +v.weight || 1, points_per_1k: +v.ppk || 0,
+    })),
+  };
+}
+
+function fillForm(cfg, active) {
+  if (dirty) return;
+  const p = (cfg.profiles || []).find(x => x.id === active) || (cfg.profiles || [])[0];
+  if (!p) return;
+  const d = cfg.engine_defaults || {};
+
+  $('profName').value = p.name || '';
+  $('baseUrl').value = p.base_url || '';
+  const a = p.auth || {};
+  setSeg('protoSeg', p.protocol || 'openai-chat');
+  renderAuthOptions((S && S.auth_styles) || {}, a.style || 'bearer');
+  // 密钥：三种来源各自独立取值，不要互相串
+  keyCache = { inline: '', env: '', file: '' };
+  const src = a.source || 'inline';
+  if (src === 'inline') keyCache.inline = a.value || '';
+  else keyCache[src] = a.ref || '';
+  setSeg('keySourceSeg', src);
+  $('keyValue').value = keyCache[src] || '';
+  updateKeyUI();
+
+  const lim = p.limits || {};
+  $('limit5h').value = lim.window_5h ?? 60000;
+  $('limitWeek').value = lim.week ?? 600000;
+
+  setSeg('modeSeg', d.mode || 'prefill');
+  $('modeTail').textContent = ({
+    prefill: '大输入 + 极短输出，实测最快',
+    decode: '小输入 + 长输出，慢约 80 倍',
+    mixed: '以预填充为主，穿插生成',
+  })[d.mode || 'prefill'];
+  $('concurrency').value = d.concurrency ?? 4;
+  $('timeout').value = d.timeout ?? 180;
+  $('inputChars').value = d.input_chars ?? 380000;
+  $('maxTokens').value = d.max_tokens ?? 8;
+  $('reasoning').value = d.reasoning_effort || 'none';
+  $('retry').value = d.retry ?? 5;
+  $('safety').value = d.safety_ratio ?? 0.97;
+  $('cacheBust').checked = d.cache_bust !== false;
+  rateWin = +d.instant_window || 20;
+  setSeg('winSeg', String(rateWin));
+
+  $('maxPoints').value = d.max_points ?? 0;
+  $('maxTokensCap').value = d.max_total_tokens ?? 0;
+  $('maxRequests').value = d.max_requests ?? 0;
+  $('duration').value = d.duration_min ?? 0;
+  $('enforceWin').checked = !!d.enforce_windows;
+  $('loop').checked = !!d.loop;
+  const ppk = (p.points_per_1k !== undefined && p.points_per_1k !== null)
+    ? p.points_per_1k : (d.points_per_1k ?? 0);
+  $('ppk').value = ppk;
+
+  // 勾选状态：保留用户已有编辑，只补新增模型
+  const prev = sel;
+  sel = {};
+  (p.models || []).forEach(m => {
+    sel[m] = prev[m] || { on: false, weight: 1, ppk: 0 };
+  });
+  (p.selected || []).forEach(s => {
+    if (!s.id) return;
+    sel[s.id] = sel[s.id] || { on: false, weight: 1, ppk: 0 };
+    sel[s.id].on = true;
+    sel[s.id].weight = s.weight || 1;
+    sel[s.id].ppk = s.points_per_1k || 0;
+  });
+  renderModels(true);
+  updateEstimate();
+}
+
+function updateKeyUI() {
+  const src = $('keySource').value;
+  const map = {
+    inline: ['API Key', 'sk-...', '明文保存在本地 config.json'],
+    env: ['环境变量名', 'MY_LLM_API_KEY', '只存变量名，运行时读取，不落盘'],
+    file: ['密钥文件路径', 'C:/keys/llm.txt', '读取文件内容并 trim'],
+  }[src] || ['API Key', 'sk-...', ''];
+  $('keyLabel').textContent = map[0];
+  $('keyValue').placeholder = map[1];
+  $('keyHint').textContent = map[2];
+}
+
+/* 三种密钥来源各自独立存值。切换来源不该把上一个来源的内容带过去——
+   否则把密钥切到「环境变量」时，输入框里会留着 sk-xxx 当成变量名。 */
+let keyCache = { inline: '', env: '', file: '' };
+
+function stashKeyInput() {
+  keyCache[$('keySource').value] = $('keyValue').value;
+}
+
+function switchKeySource(next) {
+  const cur = $('keySource').value;
+  if (next === cur) return;
+  keyCache[cur] = $('keyValue').value;    // 把当前输入存回它所属的来源
+  setSeg('keySourceSeg', next);
+  $('keyValue').value = keyCache[next] || '';
+  updateKeyUI();
+  dirty = true;
+  renderSaveState();
+}
+
+/** 只在用户真的改过密钥时才回传明文，否则回传空串让服务端用已保存的那份。
+    否则会把脱敏串（sk-abc********xyz）当成真密钥发出去，认证必然失败。 */
+function collectKey() {
+  if ($('keySource').value !== 'inline') return '';
+  const v = $('keyValue').value.trim();
+  return v.includes('*') ? '' : v;
+}
+
+/** 首次使用引导：陌生人打开页面时，明确告诉他还差哪几步。 */
+function renderFirstRun() {
+  const el = $('firstRun');
+  if (!S) { el.innerHTML = ''; return; }
+  const p = (S.config.profiles || []).find(x => x.id === S.active_profile);
+  if (!p) { el.innerHTML = ''; return; }
+  const steps = [];
+  if (!p.base_url) steps.push('填 <b>Base URL</b> —— 服务商的 API 根地址，比如 https://api.example.com');
+  if (!(p.auth && p.auth.has_key)) steps.push('填 <b>密钥</b> —— 直接填写，或改用环境变量（不落盘）');
+  if (!(p.selected || []).length) steps.push('点 <b>拉取模型</b>，勾选你要消耗的模型（也可以手动填模型 ID）');
+  if (!steps.length) { el.innerHTML = ''; return; }
+  el.className = 'first-run';
+  el.innerHTML =
+    `<div class="fr-title">还差 ${steps.length} 步就能开始</div>
+     <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>
+     <div class="fr-note">配好后点「测试连接」验证，再点「用当前配置开始消费」。</div>`;
+}
+
+/** 配置档案条下方的状态行：改动是否已落盘、密钥是否齐备。 */
+function renderSaveState() {
+  const el = $('saveState');
+  if (!S) { el.textContent = ''; return; }
+  const prof = (S.config.profiles || []).find(p => p.id === S.active_profile) || {};
+  if (dirty) {
+    el.className = 'save-state dirty';
+    el.textContent = '● 有未保存的改动';
+  } else if (!(prof.auth && prof.auth.has_key)) {
+    el.className = 'save-state warn';
+    el.textContent = '● 未配置密钥，无法开始消费';
+  } else {
+    el.className = 'save-state';
+    el.textContent = '● 已保存';
+  }
+}
+
+/* ==================== 协议与认证字段 ==================== */
+function renderAuthOptions(styles, current) {
+  const el = $('authStyle');
+  const sig = Object.keys(styles || {}).join('|');
+  if (el.dataset.sig !== sig) {
+    el.dataset.sig = sig;
+    el.innerHTML = Object.entries(styles || {}).map(([k, v]) =>
+      `<option value="${k}">${escapeHtml(v.label)}</option>`).join('');
+  }
+  if (current) el.value = current;
+  updateAuthHint();
+}
+function updateAuthHint() {
+  const a = (S && S.auth_styles) ? S.auth_styles[$('authStyle').value] : null;
+  $('authHint').textContent = a ? a.hint : '';
+}
+function applyProtocolDefaults(proto) {
+  // 切协议时把认证字段带到该协议的惯用值，之后仍可手动改
+  const p = (S && S.protocols) ? S.protocols[proto] : null;
+  if (p && p.auth) $('authStyle').value = p.auth;
+  updateAuthHint();
+}
+
+/* ==================== 模型列表 ==================== */
+function visibleModels() {
+  const q = ($('modelFilter').value || '').trim().toLowerCase();
+  return Object.keys(sel).filter(id => !q || id.toLowerCase().includes(q));
+}
+
+function renderModels(force) {
+  const ids = Object.keys(sel);
+  const sig = ids.join('|') + '::' + $('modelFilter').value;
+  if (!force && sig === modelSig) { syncModelInputs(); return; }
+  modelSig = sig;
+  modelStateSig = '';
+
+  const box = $('modelList');
+  const shown = visibleModels();
+  if (!ids.length) {
+    box.innerHTML = '<div class="model-empty">还没有模型列表<br>点「拉取模型」，或先选一个服务商预设</div>';
+    updateModelBadge(); return;
+  }
+  if (!shown.length) {
+    box.innerHTML = `<div class="model-empty">没有匹配「${escapeHtml($('modelFilter').value)}」的模型</div>`;
+    updateModelBadge(); return;
+  }
+  box.innerHTML =
+    `<div class="model-head"><span></span><span>模型</span>
+       <span class="c">权重</span><span class="c">积分/1K</span></div>` +
+    shown.map(id => `
+      <div class="model-item ${sel[id].on ? 'on' : ''}" data-m="${escapeHtml(id)}">
+        <span class="tick">✓</span>
+        <span class="name" title="${escapeHtml(id)}">${escapeHtml(id)}</span>
+        <input type="number" data-m="${escapeHtml(id)}" data-r="weight" min="0" step="1"
+               value="${sel[id].weight}" ${sel[id].on ? '' : 'disabled'}>
+        <input type="number" data-m="${escapeHtml(id)}" data-r="ppk" min="0" step="0.1"
+               value="${sel[id].ppk}" ${sel[id].on ? '' : 'disabled'}>
+      </div>`).join('');
+
+  box.querySelectorAll('.model-item').forEach(row => {
+    row.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT') return;      // 点输入框不切换勾选
+      const m = row.dataset.m;
+      sel[m].on = !sel[m].on;
+      dirty = true;
+      row.classList.toggle('on', sel[m].on);
+      row.querySelectorAll('input').forEach(i => i.disabled = !sel[m].on);
+      updateModelBadge(); updateEstimate();
+    });
+  });
+  box.querySelectorAll('input').forEach(el => {
+    el.addEventListener('change', () => {
+      const m = el.dataset.m, r = el.dataset.r;
+      sel[m][r] = parseFloat(el.value) || 0;
+      dirty = true;
+      updateEstimate();
+    });
+    el.addEventListener('click', e => e.stopPropagation());
+  });
+  updateModelBadge();
+}
+
+function syncModelInputs() {
+  // 勾选/权重/系数都没变就不用碰 DOM——每秒一次的全表同步是纯浪费
+  const sig = Object.entries(sel).map(([k, v]) => `${k}:${v.on?1:0}:${v.weight}:${v.ppk}`).join('|');
+  if (sig === modelStateSig) return;
+  modelStateSig = sig;
+  document.querySelectorAll('#modelList .model-item').forEach(row => {
+    const m = row.dataset.m;
+    if (!sel[m]) return;
+    row.classList.toggle('on', sel[m].on);
+    row.querySelectorAll('input').forEach(el => {
+      el.disabled = !sel[m].on;
+      if (document.activeElement !== el) el.value = sel[m][el.dataset.r];
+    });
+  });
+}
+
+function updateModelBadge() {
+  const on = Object.entries(sel).filter(([, v]) => v.on);
+  const n = on.length;
+  $('modelBadge').textContent = `${n} / ${Object.keys(sel).length} 个`;
+  $('modelBadge').className = 'badge ' + (n ? 'green' : 'amber');
+  const names = on.map(([k]) => k);
+  $('pickHint').textContent = n === 0
+    ? '未勾选任何模型——不勾选就无法开始消费'
+    : `本次将消耗 ${n} 个模型：${names.slice(0, 3).join('、')}`
+      + (n > 3 ? ` 等 ${n} 个` : '');
+}
+
+function updateEstimate() {
+  const chars = +$('inputChars').value || 0;
+  const outTok = +$('maxTokens').value || 0;
+  const inTok = Math.round(chars / 2.07);
+  const tok = inTok + outTok;
+  $('inputHint').textContent = `≈ ${num(inTok)} tokens`;
+  const ppk = +$('ppk').value || 0;
+  let txt = `单请求约 ${num(tok)} tokens（输入 ${num(inTok)} + 输出 ${outTok}）`;
+  if (ppk > 0) txt += ` · 约 ${(tok / 1000 * ppk).toFixed(2)} 积分`;
+  const mp = +$('maxPoints').value || 0;
+  if (mp > 0 && ppk > 0) {
+    txt += ` · 跑满 ${num(mp)} 积分需约 ${human(mp * 1000 / ppk)} tokens`;
+  }
+  $('estHint').textContent = txt;
+}
+
+/* ==================== 批量启动 ==================== */
+let batchPick = {};     // {profileId: true}
+let batchBusy = false;
+
+function renderBatchList(profiles) {
+  profiles = profiles || [];
+  const box = $('batchList');
+  const sig = profiles.map(p =>
+    `${p.id}:${p.name}:${(p.selected || []).length}:${p.auth && p.auth.has_key ? 1 : 0}`
+    + `:${p.base_url ? 1 : 0}`).join('|');
+  if (box.dataset.sig !== sig) {
+    box.dataset.sig = sig;
+    const ids = new Set(profiles.map(p => p.id));   // 清掉已不存在的选择
+    Object.keys(batchPick).forEach(k => { if (!ids.has(k)) delete batchPick[k]; });
+    box.innerHTML = profiles.map(p => {
+      const nSel = (p.selected || []).length;
+      const lim = p.limits || {};
+      const hasKey = !!(p.auth && p.auth.has_key);
+      // 没密钥 / 没选模型的配置根本起不来，直接禁掉并写明原因——
+      // 光靠启动后弹一句会自动消失的提示，用户很容易漏看，还以为只跑了一个
+      // Base URL 是最根本的——没填它，密钥和模型都无从谈起，所以先报这个
+      const block = !p.base_url ? '没填 Base URL'
+        : (!hasKey ? '没有可用的 API Key'
+          : (!nSel ? '没有勾选任何模型' : ''));
+      if (block) delete batchPick[p.id];
+      const sub = [
+        ((S.protocols || {})[p.protocol] || {}).label || p.protocol,
+        nSel ? `${nSel} 个模型` : '未选模型',
+        lim.window_5h ? `5h ${num(lim.window_5h)}` : '未设额度',
+      ].filter(Boolean).join(' · ');
+      return `<label class="switch batch-item${block ? ' blocked' : ''}">
+        <input type="checkbox" data-pid="${escapeHtml(p.id)}"
+               ${batchPick[p.id] ? 'checked' : ''} ${block ? 'disabled' : ''}>
+        <span class="track"></span>
+        <span class="txt">${escapeHtml(p.name)}<small>${escapeHtml(sub)}</small>
+          ${block ? `<small class="block-reason">无法启动：${escapeHtml(block)}</small>` : ''}</span>
+      </label>`;
+    }).join('') || '<div class="sess-empty">还没有配置</div>';
+    box.querySelectorAll('input[data-pid]').forEach(el => {
+      el.addEventListener('change', () => {
+        if (el.checked) batchPick[el.dataset.pid] = true;
+        else delete batchPick[el.dataset.pid];
+        updateBatchBadge();
+      });
+    });
+  }
+  updateBatchBadge();
+}
+
+function updateBatchBadge() {
+  // 只统计**能启动的**配置，被禁掉的不算进分母
+  const usable = $('batchList').querySelectorAll('input[data-pid]:not([disabled])').length;
+  const n = Object.keys(batchPick).length;
+  $('batchBadge').textContent = n ? `${n} / ${usable}` : (usable ? '未选' : '无可启动');
+  $('batchBadge').className = 'badge ' + (n ? 'green' : (usable ? 'grey' : 'red'));
+  $('btnBatchStart').disabled = !n;
+}
+
+/* ==================== 看板 ==================== */
+function rateLevel(r) {
+  if (!r || r < 1) return 'lv-idle';
+  if (r < 2000) return 'lv-low';
+  if (r < 8000) return 'lv-mid';
+  return 'lv-high';
+}
+
+function renderSessions(L) {
+  const list = L.sessions || [];
+  $('sessBadge').textContent = list.length;
+  $('sessWorkers').textContent = `并发 ${L.workers_in_use || 0} / ${L.max_total_workers || 32}`;
+  const box = $('sessList');
+  if (!list.length) {
+    box.innerHTML = '<div class="sess-empty">没有运行中的会话。左侧配好后点「用当前配置开始消费」。</div>';
+    return;
+  }
+  const LABEL = { running: '运行中', waiting: '等待窗口', stopping: '正在停止',
+                  done: '已结束', error: '异常', idle: '空闲' };
+  const CLS = { running: 'green', waiting: 'amber', stopping: 'amber',
+                done: 'grey', error: 'red', idle: 'grey' };
+  // 会话条数很少，直接整块重建；真正费的是日志那 120 行，那边才需要签名
+  box.innerHTML = list.map(s => `
+    <div class="sess ${s.running ? '' : 'done'}">
+      <div>
+        <div class="sess-name">${escapeHtml(s.name)}
+          <span class="badge ${CLS[s.status] || 'grey'}">${LABEL[s.status] || s.status}</span></div>
+        <div class="sess-meta">${escapeHtml(((S.protocols || {})[s.protocol] || {}).label || s.protocol)}
+          · ${escapeHtml((s.models || []).join(', '))} · 并发 ${s.concurrency}
+          ${s.avg_latency ? ` · 单请求 ${s.avg_latency.toFixed(0)} 秒` : ''}
+          ${s.wait_reason ? ' · ' + escapeHtml(s.wait_reason) : ''}</div>
+      </div>
+      <div class="sess-stats">
+        <span><b>${human(s.rate_instant, 0)}</b> tok/s</span>
+        <span><b>${human(s.total_tokens, 1)}</b> tok</span>
+        <span><b>${num(s.ok)}</b>/${num(s.requests)} 请求</span>
+      </div>
+      ${s.running
+        ? `<button class="sm ghost" data-stop="${s.sid}">停止</button>`
+        : '<button class="sm ghost" disabled>已结束</button>'}
+    </div>`).join('');
+  box.querySelectorAll('button[data-stop]').forEach(b =>
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      try {
+        await api('/api/run/stop', { sid: b.dataset.stop, reason: '手动停止' });
+        toast('已发送停止指令');
+      } catch (e) { toast(e.message, 'err'); b.disabled = false; }
+    }));
+}
+
+function renderLive(L) {
+  // —— 速率主卡 ——
+  const inst = L.rate_instant || 0;
+  $('sRate').innerHTML = `${human(inst, inst < 100 ? 1 : 0)}<span class="u">tokens/秒</span>`;
+  $('sRate').className = 'value ' + rateLevel(inst);
+  // 窗口被自动放宽时必须说明，否则用户会以为自己的设置没生效
+  $('rateWinNote').textContent = L.window_auto
+    ? `完成太稀疏，${Math.round(L.instant_window)} 秒窗口会频繁读成 0，`
+      + `已自动放宽到 ${Math.round(L.effective_window)} 秒`
+    : '';
+  $('sRateAvg').textContent = human(L.rate || 0, 1);
+  $('sRatePeak').textContent = human(L.rate_peak || 0, 1);
+  $('sRps').textContent = (L.rps || 0).toFixed(2);
+  drawSpark(L.spark || []);
+
+  // —— 指标卡 ——
+  $('sTokens').textContent = human(L.total_tokens, 1);
+  $('sTokensSub').textContent = `输入 ${human(L.prompt_tokens, 1)} · 输出 ${human(L.completion_tokens, 1)}`;
+  const hasCoef = (+$('ppk').value || 0) > 0 || Object.values(sel).some(v => v.ppk > 0);
+  if (hasCoef) {
+    $('sPoints').textContent = num(L.points, 1);
+    $('sPointsSub').textContent = '按当前系数估算';
+  } else {
+    $('sPoints').textContent = '—';
+    $('sPointsSub').textContent = '需填换算系数';
+  }
+  $('sReq').textContent = num(L.requests);
+  $('sReqSub').textContent = `成功 ${num(L.ok)} · 失败 ${num(L.failed)}`;
+  $('sElapsed').textContent = dur(L.elapsed);
+  const dm = +$('duration').value || 0;
+  $('sLeft').textContent = dm > 0
+    ? `剩余 ${dur(Math.max(0, dm * 60 - L.elapsed))}`
+    : (L.running ? '未设时长上限' : '—');
+  $('sCached').textContent = human(L.cached_tokens, 1);
+
+  // —— 状态 ——
+  const st = L.running ? L.status : (L.status === 'idle' ? 'idle' : L.status);
+  const dot = { idle: 'idle', running: 'running', waiting: 'waiting',
+                stopping: 'waiting', done: 'done', error: 'error' }[st] || 'idle';
+  const n = L.session_count || 0;
+  const label = n > 1
+    ? `${n} 个会话运行中`
+    : ({ idle: '空闲', running: '运行中', waiting: '等待窗口',
+         stopping: '正在停止（等在途请求结束）', done: '已结束', error: '异常' }[st] || st);
+  $('statusText').innerHTML = `<span class="dot ${dot}"></span> ${label}` +
+    (L.stop_reason ? ` · ${escapeHtml(L.stop_reason)}` : '');
+  // 可以同时跑多个会话，所以「开始」不禁用；只有真在跑时才允许「全部停止」
+  $('btnStart').disabled = false;
+  $('btnStop').disabled = !L.running;
+
+  renderSessions(L);
+
+  // —— 窗口 ——
+  const w = L.windows;
+  const hasLimit = w && (w.limit_5h > 0 || w.limit_week > 0);
+  if (w && w.enforce && !w.coef_set) {
+    // 没设换算系数就没法把 token 折算成积分，限流形同虚设，必须说清楚
+    $('winBadge').textContent = '缺换算系数';
+    $('winBadge').className = 'badge red';
+    $('w5Text').textContent = '未设换算系数，无法按积分限流';
+    $('wWText').textContent = `窗口内 ${human(w.tokens_5h, 1)} / ${human(w.tokens_week, 1)} tokens`;
+    $('w5Bar').querySelector('i').style.width = '0%';
+    $('wWBar').querySelector('i').style.width = '0%';
+  } else if (hasLimit) {
+    $('winBadge').textContent = w.enforce ? '已启用' : '仅展示';
+    $('winBadge').className = 'badge ' + (w.enforce ? 'green' : 'grey');
+    paintBar('w5', w.points_5h, w.limit_5h, `${num(w.points_5h, 0)} / ${num(w.limit_5h, 0)} 积分`);
+    paintBar('wW', w.points_week, w.limit_week, `${num(w.points_week, 0)} / ${num(w.limit_week, 0)} 积分`);
+  } else if (w) {
+    $('winBadge').textContent = '未设额度';
+    $('winBadge').className = 'badge grey';
+    $('w5Text').textContent = `窗口内 ${human(w.tokens_5h, 1)} tokens`;
+    $('wWText').textContent = `窗口内 ${human(w.tokens_week, 1)} tokens`;
+    $('w5Bar').querySelector('i').style.width = '0%';
+    $('wWBar').querySelector('i').style.width = '0%';
+  } else {
+    $('winBadge').textContent = '未设置';
+    $('winBadge').className = 'badge grey';
+    $('w5Text').textContent = '—';
+    $('wWText').textContent = '—';
+    $('w5Bar').querySelector('i').style.width = '0%';
+    $('wWBar').querySelector('i').style.width = '0%';
+  }
+  if (L.wait_until && L.wait_until > Date.now() / 1000) {
+    $('waitRow').style.display = '';
+    $('waitText').textContent = `${L.wait_reason} · 还剩 ${dur(L.wait_until - Date.now() / 1000)}`;
+  } else {
+    $('waitRow').style.display = 'none';
+  }
+
+  // —— 趋势图 ——
+  const series = chartRange === 'live'
+    ? (L.series || []).map(p => ({ t: p.t, tokens: p.tokens, bw: 10 }))
+    : (L.per_minute || []).map(p => ({ t: p.t, tokens: p.tokens, bw: 60 }));
+  $('chartBadge').textContent = chartRange === 'live' ? '10 秒粒度' : '1 分钟粒度';
+  drawChart(series);
+}
+
+function paintBar(id, used, limit, text) {
+  const pct = limit > 0 ? Math.min(100, used / limit * 100) : 0;
+  $(id + 'Text').textContent = `${text}（${pct.toFixed(1)}%）`;
+  const bar = $(id + 'Bar');
+  bar.className = 'bar' + (pct > 92 ? ' hot' : pct > 75 ? ' warn' : '');
+  bar.querySelector('i').style.width = pct + '%';
+}
+
+/* ==================== 迷你速率图 ==================== */
+function drawSpark(data) {
+  const sig = data.length + '|' + (data.length ? data[data.length - 1] : 0);
+  if (sig === sparkSig) return;
+  sparkSig = sig;
+  const cv = $('spark');
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 180, H = 62;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  const max = Math.max(...data, 1);
+  const n = data.length;
+  if (!n) return;
+  const x = (i) => (n === 1 ? W / 2 : W * i / (n - 1));
+
+  // 面积
+  const grd = g.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0, '#3fb95055');
+  grd.addColorStop(1, '#3fb95000');
+  g.beginPath();
+  g.moveTo(x(0), H - 2);
+  data.forEach((v, i) => g.lineTo(x(i), H - 2 - (v / max) * (H - 6)));
+  g.lineTo(x(n - 1), H - 2);
+  g.closePath();
+  g.fillStyle = grd; g.fill();
+
+  // 线
+  g.beginPath();
+  data.forEach((v, i) => {
+    const y = H - 2 - (v / max) * (H - 6);
+    i ? g.lineTo(x(i), y) : g.moveTo(x(i), y);
+  });
+  g.strokeStyle = '#3fb950'; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
+
+  // 末端点
+  const ly = H - 2 - (data[n - 1] / max) * (H - 6);
+  g.beginPath(); g.arc(x(n - 1), ly, 2.6, 0, 7);
+  g.fillStyle = '#3fb950'; g.fill();
+}
+
+/* ==================== 趋势图 ==================== */
+function drawChart(series) {
+  const cv = $('chart');
+  const wrap = cv.parentElement;
+  const tip = $('chartTip');
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || wrap.clientWidth, H = 170;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+
+  const pts = (series || []).map(p => ({
+    t: p.t, rate: (p.tokens || 0) / (p.bw || 60), tokens: p.tokens || 0,
+  }));
+  // 累计
+  let acc = 0;
+  pts.forEach(p => { acc += p.tokens; p.cum = acc; });
+  chartCache = { pts, W, H, tip };
+
+  if (pts.length < 2 || acc === 0) {
+    $('chartStat').textContent = '';
+    g.fillStyle = '#6e7681'; g.font = '12px sans-serif'; g.textAlign = 'center';
+    g.fillText('开始消费后这里会显示趋势', W / 2, H / 2);
+    tip.style.opacity = 0;
+    return;
+  }
+
+  const pad = { l: 52, r: 58, t: 14, b: 22 };
+  const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+  const maxRate = Math.max(...pts.map(p => p.rate), 1);
+  const maxCum = Math.max(acc, 1);
+  const X = (i) => pad.l + iw * i / (pts.length - 1);
+  const Yr = (v) => pad.t + ih - (v / maxRate) * ih;
+  const Yc = (v) => pad.t + ih - (v / maxCum) * ih;
+
+  // 网格 + 左轴（速率）
+  g.font = '10px ui-monospace, monospace';
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.t + ih * i / 4;
+    g.strokeStyle = '#1e242c'; g.beginPath();
+    g.moveTo(pad.l, y); g.lineTo(W - pad.r, y); g.stroke();
+    g.fillStyle = '#8b949e'; g.textAlign = 'right';
+    g.fillText(human(maxRate * (1 - i / 4), 0), pad.l - 6, y + 3);
+    g.fillStyle = '#4d5560'; g.textAlign = 'left';
+    g.fillText(human(maxCum * (1 - i / 4), 0), W - pad.r + 6, y + 3);
+  }
+
+  // 速率面积
+  const grd = g.createLinearGradient(0, pad.t, 0, pad.t + ih);
+  grd.addColorStop(0, '#3fb95045');
+  grd.addColorStop(1, '#3fb95000');
+  g.beginPath();
+  g.moveTo(X(0), pad.t + ih);
+  pts.forEach((p, i) => g.lineTo(X(i), Yr(p.rate)));
+  g.lineTo(X(pts.length - 1), pad.t + ih);
+  g.closePath();
+  g.fillStyle = grd; g.fill();
+
+  // 速率线
+  g.beginPath();
+  pts.forEach((p, i) => i ? g.lineTo(X(i), Yr(p.rate)) : g.moveTo(X(i), Yr(p.rate)));
+  g.strokeStyle = '#3fb950'; g.lineWidth = 1.8; g.lineJoin = 'round'; g.stroke();
+
+  // 累计线
+  g.beginPath();
+  pts.forEach((p, i) => i ? g.lineTo(X(i), Yc(p.cum)) : g.moveTo(X(i), Yc(p.cum)));
+  g.strokeStyle = '#1f6feb'; g.lineWidth = 1.5; g.setLineDash([4, 3]); g.stroke();
+  g.setLineDash([]);
+
+  // 时间轴
+  g.fillStyle = '#8b949e'; g.textAlign = 'center';
+  const step = Math.max(1, Math.ceil(pts.length / 7));
+  pts.forEach((p, i) => {
+    if (i % step) return;
+    g.fillText(hhmm(p.t), X(i), H - 6);
+  });
+
+  // 悬停
+  if (hoverIdx >= 0 && hoverIdx < pts.length) {
+    const p = pts[hoverIdx], px = X(hoverIdx);
+    g.strokeStyle = '#4d5560'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(px, pad.t); g.lineTo(px, pad.t + ih); g.stroke();
+    g.beginPath(); g.arc(px, Yr(p.rate), 3.4, 0, 7); g.fillStyle = '#3fb950'; g.fill();
+    g.beginPath(); g.arc(px, Yc(p.cum), 3.4, 0, 7); g.fillStyle = '#1f6feb'; g.fill();
+
+    tip.style.opacity = 1;
+    tip.innerHTML =
+      `<div class="tt">${hhmmss(p.t)}</div>` +
+      `<div><span class="tt">速率</span> <span class="tv g">${human(p.rate, 0)} tok/s</span></div>` +
+      `<div><span class="tt">本段</span> <span class="tv">${human(p.tokens, 1)} tok</span></div>` +
+      `<div><span class="tt">累计</span> <span class="tv">${human(p.cum, 1)} tok</span></div>`;
+    const tw = tip.offsetWidth || 140;
+    let lx = px + 12;
+    if (lx + tw > W) lx = px - tw - 12;
+    tip.style.left = Math.max(0, lx) + 'px';
+    tip.style.top = Math.max(0, Yr(p.rate) - 30) + 'px';
+  } else {
+    tip.style.opacity = 0;
+  }
+
+  const peak = Math.max(...pts.map(p => p.rate));
+  $('chartStat').textContent = `峰值 ${human(peak, 0)} tok/s · 共 ${human(acc, 1)} tok`;
+}
+
+/* ==================== 日志 / 历史 ==================== */
+// 每秒轮询一次，但绝大多数帧内容没变。用签名挡掉无谓的 DOM 重建。
+let logsSig = '';
+let histSig = '';
+
+function renderLogs(logs) {
+  const sig = logs.length + '|' + (logs.length ? logs[logs.length - 1].ts : 0);
+  if (sig === logsSig) return;
+  logsSig = sig;
+  const box = $('logs');
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 30;
+  box.innerHTML = logs.map(l =>
+    `<div class="${l.level}"><span class="t">${hhmm(l.ts)}</span> ${escapeHtml(l.msg)}</div>`).join('');
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function renderHistory(rows) {
+  const sig = rows.map(r => `${r.id}${r.status}${r.requests}${r.failed}${r.ended || 0}`).join(',');
+  if (sig === histSig) return;
+  histSig = sig;
+  $('histBadge').textContent = rows.length;
+  $('histBody').innerHTML = rows.map(r => {
+    const cls = { done: 'green', running: 'blue', error: 'red', interrupted: 'amber' }[r.status] || 'grey';
+    const txt = { done: '完成', running: '运行中', error: '异常', interrupted: '被中断' }[r.status] || r.status;
+    const models = (r.models || '').split(',').filter(Boolean);
+    return `<tr>
+      <td>${new Date(r.started * 1000).toLocaleString('zh-CN',
+        { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+      <td>${escapeHtml(r.profile_name || r.profile || '')}</td>
+      <td title="${escapeHtml(models.join(', '))}">${models.length > 1 ? models.length + ' 个模型' : escapeHtml(models[0] || '')}</td>
+      <td><span class="badge ${cls}">${txt}</span></td>
+      <td class="num">${num(r.requests)}</td>
+      <td class="num">${num(r.failed)}</td>
+      <td class="num">${human((r.prompt_tokens || 0) + (r.completion_tokens || 0), 1)}</td>
+      <td><button class="sm ghost" data-run="${r.id}">明细</button></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" style="color:var(--muted);padding:14px">还没有历史会话</td></tr>';
+  $('histBody').querySelectorAll('button[data-run]').forEach(b =>
+    b.addEventListener('click', () => showRunDetail(b.dataset.run)));
+}
+
+async function showRunDetail(runId) {
+  try {
+    const d = await api(`/api/run/detail?run=${encodeURIComponent(runId)}`, undefined, 'GET');
+    const r = d.run || {};
+    const models = (d.models || []).map(m => `${m.model}: ${human(m.p + m.c, 1)} tokens / ${num(m.n)} 次`).join('\n');
+    const errs = (d.errors || []).map(e => `${e.kind}: ${num(e.n)} 次`).join('\n') || '无';
+    toast(`会话 ${runId}\n请求 ${num(r.requests)}（失败 ${num(r.failed)}）\n` +
+      `tokens ${human((r.prompt_tokens || 0) + (r.completion_tokens || 0), 1)}\n\n` +
+      `按模型：\n${models || '—'}\n\n错误：\n${errs}`, 'ok', 12000);
+  } catch (e) { toast('读取失败：' + e.message, 'err'); }
+}
+
+/* ==================== 主轮询 ==================== */
+async function tick() {
+  try {
+    const st = await api('/api/state', undefined, 'GET');
+    S = st;
+    $('verBadge').textContent = 'v' + st.version;
+    $('profileMeta').textContent = `${st.active_profile_name}${st.active_has_key ? '' : '（缺密钥）'}`;
+
+    const selEl = $('profileSel');
+    const sig = (st.config.profiles || []).map(p =>
+      `${p.id}:${p.name}:${p.protocol}:${p.auth && p.auth.has_key ? 1 : 0}`).join('|');
+    if (selEl.dataset.sig !== sig) {
+      selEl.dataset.sig = sig;
+      // 下拉只显示用户自己起的名字，不擅自追加协议/状态标签——
+      // 密钥是否齐备由下方状态行说明
+      selEl.innerHTML = (st.config.profiles || []).map(p =>
+        `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('');
+    }
+    if (selEl.value !== st.active_profile) selEl.value = st.active_profile;
+
+    fillForm(st.config, st.active_profile);
+    renderFirstRun();
+    renderBatchList(st.config.profiles);
+    renderSaveState();
+    renderLive(st.live);
+    renderLogs(st.logs || []);
+    renderHistory(st.history || []);
+  } catch (e) {
+    $('statusText').innerHTML = `<span class="dot error"></span> 与服务失联：${escapeHtml(e.message)}`;
+  }
+}
+
+/* ==================== 事件 ==================== */
+function bind() {
+  initSteppers();
+  initSeg('modeSeg', (v) => {
+    dirty = true;
+    $('modeTail').textContent = ({
+      prefill: '大输入 + 极短输出，实测最快',
+      decode: '小输入 + 长输出，慢约 80 倍',
+      mixed: '以预填充为主，穿插生成',
+    })[v];
+    updateEstimate();
+  });
+  // 密钥来源要自己接管：切换时需要先把当前输入存回原来源，所以不能用 initSeg
+  $('keySourceSeg').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-v]');
+    if (b) switchKeySource(b.dataset.v);
+  });
+  initSeg('protoSeg', (v) => { dirty = true; applyProtocolDefaults(v); });
+  $('authStyle').addEventListener('change', () => { dirty = true; updateAuthHint(); });
+  initSeg('rangeSeg', (v) => {
+    chartRange = v;
+    hoverIdx = -1;
+    if (S) renderLive(S.live);
+  });
+  initSeg('winSeg', async (v) => {
+    rateWin = +v;
+    dirty = true; renderSaveState();
+    try {
+      // 立刻通知服务端，不用等下次启动会话
+      await api('/api/config/window', { seconds: rateWin });
+      if (S) renderLive(S.live);
+    } catch (e) { toast('窗口设置失败：' + e.message, 'err'); }
+  });
+
+  document.querySelectorAll('.col input, .col select').forEach(el => {
+    ['input', 'change'].forEach(ev => el.addEventListener(ev, () => {
+      if (['profileSel', 'modelFilter'].includes(el.id)) return;
+      dirty = true; updateEstimate(); renderSaveState();
+    }));
+  });
+  NUM_FIELDS.forEach(id => { if ($(id)) $(id).addEventListener('change', updateEstimate); });
+  $('modelFilter').addEventListener('input', () => renderModels(true));
+
+  // 图表悬停
+  const cv = $('chart');
+  cv.addEventListener('mousemove', (e) => {
+    if (!chartCache || !chartCache.pts.length) return;
+    const { pts, W } = chartCache;
+    const pad = { l: 52, r: 58 };
+    const rect = cv.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const iw = W - pad.l - pad.r;
+    const i = Math.round((mx - pad.l) / iw * (pts.length - 1));
+    hoverIdx = Math.min(pts.length - 1, Math.max(0, i));
+    drawChart(chartRange === 'live'
+      ? (S.live.series || []).map(p => ({ t: p.t, tokens: p.tokens, bw: 10 }))
+      : (S.live.per_minute || []).map(p => ({ t: p.t, tokens: p.tokens, bw: 60 })));
+  });
+  cv.addEventListener('mouseleave', () => {
+    hoverIdx = -1;
+    if (S) renderLive(S.live);
+  });
+
+  $('baseUrl').addEventListener('blur', async () => {
+    const v = $('baseUrl').value.trim();
+    if (!v) return;
+    // 只在该配置还没拉到模型时自动猜协议，避免覆盖用户的手动选择
+    if (Object.keys(sel).length) return;
+    try {
+      const r = await api('/api/guess_protocol', { base_url: v });
+      if (r.protocol && r.protocol !== $('protocol').value) {
+        setSeg('protoSeg', r.protocol);
+        applyProtocolDefaults(r.protocol);
+        toast(`已按地址自动选择协议：${(S.protocols[r.protocol] || {}).label || r.protocol}`,
+          'ok', 3000);
+      }
+    } catch (e) { /* 猜不出来就算了 */ }
+  });
+
+  $('profileSel').addEventListener('change', async () => {
+    if (dirty && !confirm('当前配置有未保存的改动，切换后会丢失。\n确定切换？')) {
+      $('profileSel').value = S.active_profile;      // 回滚选择
+      return;
+    }
+    await api('/api/profile/activate', { id: $('profileSel').value });
+    dirty = false; modelSig = ''; sel = {}; toast('已切换配置');
+    tick();
+  });
+
+  $('btnTest').addEventListener('click', async () => {
+    const b = $('btnTest'); b.disabled = true; b.textContent = '测试中…';
+    try {
+      const r = await api('/api/test', {
+        profile_id: S.active_profile, base_url: $('baseUrl').value,
+        protocol: $('protocol').value, auth_style: $('authStyle').value,
+        api_key: collectKey(),
+      });
+      const res = r.result;
+      if (res.models_ok && res.chat_ok) {
+        $('connBadge').textContent = '连通'; $('connBadge').className = 'badge green';
+        toast(`连接正常 · ${res.protocol} · 发现 ${res.models.length} 个模型 · 首包 ${res.chat_latency.toFixed(2)}s`);
+      } else if (res.models_ok) {
+        $('connBadge').textContent = '部分可用'; $('connBadge').className = 'badge amber';
+        toast(`模型列表可用，但对话请求失败：${res.chat_error}`, 'warn', 8000);
+      } else {
+        $('connBadge').textContent = '失败'; $('connBadge').className = 'badge red';
+        toast(`连接失败：${res.models_error}`, 'err', 8000);
+      }
+    } catch (e) { toast('测试失败：' + e.message, 'err'); }
+    finally { b.disabled = false; b.textContent = '测试连接'; }
+  });
+
+  $('btnModels').addEventListener('click', async () => {
+    const b = $('btnModels'); b.disabled = true; b.textContent = '拉取中…';
+    try {
+      const r = await api('/api/models', {
+        profile_id: S.active_profile, base_url: $('baseUrl').value,
+        protocol: $('protocol').value, auth_style: $('authStyle').value,
+        api_key: collectKey(),
+      });
+      const keep = sel;
+      sel = {};
+      (r.models || []).forEach(m => { sel[m.id] = keep[m.id] || { on: false, weight: 1, ppk: 0 }; });
+      modelSig = ''; renderModels(true);
+      toast(`拉到 ${(r.models || []).length} 个模型`);
+    } catch (e) { toast('拉取失败：' + e.message, 'err'); }
+    finally { b.disabled = false; b.textContent = '拉取模型'; }
+  });
+
+  $('btnSave').addEventListener('click', async () => {
+    try { await saveProfile(); dirty = false; toast('配置已保存'); tick(); }
+    catch (e) { toast('保存失败：' + e.message, 'err'); }
+  });
+
+  $('btnNewProf').addEventListener('click', async () => {
+    if (dirty && !confirm('当前配置有未保存的改动，新建后会丢失。\n确定新建？')) return;
+    // 继承协议、认证字段、换算系数和窗口额度——新配置通常是同一家服务商的另一套密钥，
+    // 不继承的话系数会静默变成 0、额度变成不限，窗口限流就形同虚设
+    await api('/api/profile/save', { profile: {
+      name: '新配置',
+      protocol: $('protocol').value,
+      base_url: '',
+      points_per_1k: +$('ppk').value || 0,
+      limits: { window_5h: +$('limit5h').value || 0,
+                week: +$('limitWeek').value || 0, unit: 'points' },
+      auth: { source: 'env', ref: 'MY_LLM_API_KEY', style: $('authStyle').value },
+    } });
+    dirty = false; modelSig = ''; sel = {};
+    toast('已新建配置');
+    tick();
+  });
+
+  $('btnDupProf').addEventListener('click', async () => {
+    if (dirty && !confirm('当前配置有未保存的改动，复制出的副本不含这些改动。\n确定继续？')) return;
+    try {
+      await api('/api/profile/duplicate', { id: S.active_profile });
+      dirty = false; modelSig = ''; sel = {};
+      toast('已复制为新配置');
+      tick();
+    } catch (e) { toast('复制失败：' + e.message, 'err'); }
+  });
+  $('btnDelProf').addEventListener('click', async () => {
+    if (!confirm('确定删除当前配置？该操作不可撤销。')) return;
+    try { await api('/api/profile/delete', { id: S.active_profile }); toast('已删除'); dirty = false; tick(); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+  $('btnExportCfg').addEventListener('click', () => { location.href = '/api/export/config.json'; });
+  $('btnImportCfg').addEventListener('click', () => $('importFile').click());
+  $('importFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const txt = await f.text();
+      const r = await api('/api/profile/import', { data: JSON.parse(txt) });
+      toast(`导入 ${r.imported} 个配置`); dirty = false; tick();
+    } catch (err) { toast('导入失败：' + err.message, 'err'); }
+    e.target.value = '';
+  });
+
+  // 批量操作只作用于**当前筛选出来的**模型——列表可能有几百个，
+  // 无差别「全选」会把不想消耗的也一起带上
+  $('btnSelAll').addEventListener('click', () => {
+    visibleModels().forEach(m => { if (sel[m]) sel[m].on = true; });
+    dirty = true; renderModels(true); updateEstimate();
+  });
+  $('btnSelNone').addEventListener('click', () => {
+    visibleModels().forEach(m => { if (sel[m]) sel[m].on = false; });
+    dirty = true; renderModels(true); updateEstimate();
+  });
+  $('btnSelClear').addEventListener('click', () => {
+    Object.values(sel).forEach(v => v.on = false);
+    dirty = true; renderModels(true); updateEstimate();
+  });
+
+  // 手动加模型：/models 不一定返回全部（有些网关只列部分），
+  // 想消耗哪个就填哪个，不受列表限制
+  const addModel = () => {
+    const id = $('newModel').value.trim();
+    if (!id) return;
+    const existed = !!sel[id];
+    if (!existed) sel[id] = { on: true, weight: 1, ppk: 0 };
+    else sel[id].on = true;
+    $('newModel').value = '';
+    dirty = true; modelSig = ''; renderModels(true); updateEstimate();
+    toast(existed ? `「${id}」已在列表里，已勾选` : `已加入并勾选「${id}」`);
+  };
+  $('btnAddModel').addEventListener('click', addModel);
+  $('newModel').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addModel(); }
+  });
+
+  $('btnCalib').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      const r = await api('/api/calibrate/auto', { profile_id: S.active_profile, limit_5h: +$('limit5h').value });
+      $('ppk').value = r.points_per_1k.toFixed(4);
+      dirty = true; updateEstimate();
+      toast(`按 5h 窗口反推：窗口内 ${num(r.tokens)} tokens ÷ 上限 ${num(r.limit_5h)} 积分\n` +
+        `→ ${r.points_per_1k.toFixed(4)} 积分/1K tokens\n` +
+        `（前提：该窗口额度确实被打满过，否则这只是上界）`, 'warn', 11000);
+    } catch (e2) { toast(e2.message, 'err'); }
+  });
+
+  $('btnStart').addEventListener('click', async () => {
+    const spec = readSpec();
+    if (!spec.models.length) return toast('请至少勾选一个模型', 'err');
+    if (!$('baseUrl').value.trim()) return toast('请先填写 Base URL', 'err');
+    if ($('keySource').value === 'inline' && !$('keyValue').value.trim())
+      return toast('请填写 API Key', 'err');
+    try {
+      await saveProfile();
+      dirty = false;
+      const r = await api('/api/run/start', { spec, profile_id: S.active_profile });
+      toast(`已启动新会话 · ${S.active_profile_name} · ${r.sid}`);
+      tick();
+    } catch (e) { toast('启动失败：' + e.message, 'err'); }
+  });
+
+  $('btnStop').addEventListener('click', async () => {
+    $('btnStop').disabled = true;
+    try { await api('/api/run/stop', { reason: '手动停止' }); toast('已发送停止指令'); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+
+  $('btnBatchStart').addEventListener('click', async () => {
+    if (batchBusy) return;
+    const ids = Object.keys(batchPick);
+    if (!ids.length) return toast('先勾选至少一个配置', 'err');
+    batchBusy = true;
+    const res = $('batchResult');
+    res.className = 'hint';
+    res.textContent = '正在启动…';
+    try {
+      // 先存当前配置，保证表单里刚改的策略参数被带上
+      await saveProfile();
+      dirty = false;
+      const r = await api('/api/run/start_batch', {
+        profile_ids: ids, spec: readSpec(),
+      });
+      const ok = r.started.length, bad = r.failed.length;
+      const detail = r.failed.map(f => `· ${f.name}：${f.error}`).join('\n');
+      // 结果同时写进页面，不只弹 toast——toast 会消失，漏看就以为只跑了一个
+      if (ok && !bad) {
+        res.className = 'hint ok';
+        res.textContent = `已启动 ${ok} 个会话：${r.started.map(s => s.name).join('、')}`;
+      } else if (ok) {
+        res.className = 'hint warn';
+        res.textContent = `已启动 ${ok} 个，${bad} 个没起来：\n${detail}`;
+      } else {
+        res.className = 'hint err';
+        res.textContent = `全部没起来：\n${detail}`;
+      }
+      tick();
+    } catch (e) {
+      res.className = 'hint err';
+      res.textContent = '启动失败：' + e.message;
+    } finally { batchBusy = false; }
+  });
+
+  $('btnBatchClear').addEventListener('click', () => {
+    batchPick = {};
+    $('batchList').dataset.sig = '';
+    $('batchResult').textContent = '';
+    renderBatchList((S && S.config && S.config.profiles) || []);
+  });
+
+  $('btnExpReq').addEventListener('click', () => {
+    const q = (S && S.live && S.live.run_id) ? `?run=${S.live.run_id}` : '';
+    location.href = '/api/export/requests.csv' + q;
+  });
+  $('btnExpRun').addEventListener('click', () => { location.href = '/api/export/runs.csv'; });
+
+  window.addEventListener('resize', () => { if (S) renderLive(S.live); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && S && S.live.running) $('btnStop').click();
+  });
+}
+
+async function saveProfile() {
+  stashKeyInput();
+  const src = $('keySource').value;
+  const auth = { source: src, style: $('authStyle').value };
+  if (src === 'inline') auth.value = keyCache.inline;
+  else auth.ref = keyCache[src];
+  const spec = readSpec();
+  await api('/api/profile/save', { profile: {
+    id: S.active_profile,
+    name: $('profName').value,
+    protocol: $('protocol').value,
+    base_url: $('baseUrl').value.trim(),
+    auth,
+    models: Object.keys(sel),
+    selected: spec.models,
+    limits: { window_5h: spec.limit_5h, week: spec.limit_week, unit: 'points' },
+    points_per_1k: spec.points_per_1k,
+  } });
+  await api('/api/config/engine', { defaults: {
+    mode: spec.mode, concurrency: spec.concurrency, input_chars: spec.input_chars,
+    max_tokens: spec.max_tokens, reasoning_effort: spec.reasoning_effort,
+    timeout: spec.timeout, retry: spec.retry, safety_ratio: spec.safety_ratio,
+    instant_window: spec.instant_window,
+    cache_bust: spec.cache_bust, max_points: spec.max_points,
+    max_total_tokens: spec.max_total_tokens, max_requests: spec.max_requests,
+    duration_min: spec.duration_min, enforce_windows: spec.enforce_windows,
+    points_per_1k: spec.points_per_1k, loop: spec.loop,
+  } });
+}
+
+/* ==================== 启动 ==================== */
+bind();
+tick();
+
+// 自适应轮询：标签页切到后台就降到 5 秒一次，回到前台立刻补一帧。
+// 否则挂在后台的页面会一直每秒全量拉取 + 渲染，纯属白烧 CPU。
+let pollTimer = null;
+function scheduleTick() {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    if (!document.hidden) await tick();
+    scheduleTick();
+  }, document.hidden ? 5000 : 1000);
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) tick();
+  scheduleTick();
+});
+scheduleTick();
+
+</script>
+</body>
+</html>

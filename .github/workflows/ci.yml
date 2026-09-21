@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 矩阵刻意开得小：3 个任务，不是 9 个。
+#
+# 要防的真实风险只有两个：
+#   1. 声明支持 Python 3.9+，但作者本地大概率只有 3.13，3.9 的兼容性只能靠 CI 兜
+#   2. Windows 是主要使用平台，也是路径、编码、换行符问题最容易暴露的地方
+#
+# macOS 对纯标准库项目几乎不提供额外信息（和 Linux 行为一致），
+# 3.12 处在 3.9 和 3.13 之间、几乎没有独立风险，所以都不单开。
+# 想扩矩阵就把 include 里加一行，别整段照抄 3×3。
+jobs:
+  test:
+    name: py${{ matrix.python-version }} · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  python-version: "3.9" }    # 声明的最低版本
+          - { os: ubuntu-latest,  python-version: "3.13" }   # 最新版本
+          - { os: windows-latest, python-version: "3.13" }   # 主要用户平台
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: 语法检查
+        run: python -m compileall -q tokenfurnace run.py scripts
+
+      - name: 单元测试（全部离线）
+        run: python -m unittest discover -s tests -v
+
+      - name: 协议差异实证
+        run: python scripts/protocol_probe.py
+
+      - name: 冒烟测试
+        run: python scripts/smoke_ci.py

@@ -1,0 +1,45 @@
+{
+  "version": 2,
+  "active_profile": "default",
+  "profiles": [
+    {
+      "id": "default",
+      "name": "我的端点",
+      "protocol": "openai-chat",
+      "base_url": "https://api.example.com/v1",
+      "auth": {
+        "source": "env",
+        "value": "",
+        "ref": "TOKENFURNACE_API_KEY",
+        "style": "bearer"
+      },
+      "headers": {},
+      "models": [],
+      "selected": [
+        { "id": "example-model", "weight": 1, "points_per_1k": 0 }
+      ],
+      "limits": { "window_5h": 0, "week": 0, "unit": "tokens" },
+      "points_per_1k": 0,
+      "note": "密钥走环境变量，不落盘。也可以把 source 改成 inline 直接写 value。"
+    }
+  ],
+  "ui": { "poll_ms": 1000, "confirm_big_budget": true },
+  "engine_defaults": {
+    "mode": "prefill",
+    "concurrency": 4,
+    "input_chars": 380000,
+    "max_tokens": 8,
+    "reasoning_effort": "none",
+    "cache_bust": true,
+    "timeout": 180,
+    "retry": 5,
+    "safety_ratio": 0.97,
+    "max_points": 0,
+    "max_total_tokens": 0,
+    "max_requests": 0,
+    "duration_min": 0,
+    "enforce_windows": false,
+    "points_per_1k": 0,
+    "loop": false
+  }
+}
