@@ -1,4 +1,4 @@
-# TokenFurnace
+# TokenFurnace 白嫖用户词元大熔炉
 
 **零依赖的本地 Web 控制台，用来消耗、观测和按额度管理 LLM 的 token 用量。**
 
