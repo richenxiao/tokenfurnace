@@ -9,11 +9,32 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#)
 
+## 拿到手
+
+**单文件（最快）**：从 [Releases](https://github.com/richenxiao/tokenfurnace/releases/latest) 下载 `tokenfurnace-0.1.0.pyz`，然后
+
 ```bash
+python tokenfurnace-0.1.0.pyz
+```
+
+整个工具就这一个文件，60 KB。不用 clone，不用 pip，不用管目录结构。浏览器会自动打开 `http://127.0.0.1:8760/`。
+
+**克隆源码**：
+
+```bash
+git clone https://github.com/richenxiao/tokenfurnace.git
+cd tokenfurnace
 python run.py
 ```
 
-浏览器自动打开 `http://127.0.0.1:8760/`。纯 Python 标准库，不用装包、不用编译。
+**装成命令**（在克隆出来的目录里）：
+
+```bash
+pip install -e .
+tokenfurnace
+```
+
+三种方式都只需要 Python 3.9+，没有其他依赖。配置和账本会落在你执行命令时所在的目录。
 
 ---
 
@@ -28,19 +49,6 @@ python run.py
 ---
 
 ## 快速开始
-
-```bash
-git clone https://github.com/richenxiao/tokenfurnace.git
-cd tokenfurnace
-python run.py
-```
-
-也可以装成命令：
-
-```bash
-pip install -e .
-tokenfurnace
-```
 
 界面上一共四步：
 
@@ -360,6 +368,7 @@ tokenfurnace/
 │   ├── smoke_ci.py           进程内起服务并断言接口形状（CI 用）
 │   ├── smoke_live.py         对已运行的服务做端到端联调
 │   ├── build_preview.py      重新生成 docs/preview.html
+│   ├── build_release.py      打成单文件 .pyz（Release 附件）
 │   └── check_batch_ui.js     用 jsdom 跑真实前端代码（需 npm i jsdom）
 ├── tests/test_core.py        90 个离线单元测试
 ├── config.example.json       配置模板

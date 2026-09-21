@@ -9,11 +9,32 @@ English · [简体中文](README.md)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](#)
 
+## Get it
+
+**Single file (fastest).** Download `tokenfurnace-0.1.0.pyz` from [Releases](https://github.com/richenxiao/tokenfurnace/releases/latest), then:
+
 ```bash
+python tokenfurnace-0.1.0.pyz
+```
+
+The whole tool is that one 60 KB file. No clone, no pip, no directory layout to worry about. Your browser opens `http://127.0.0.1:8760/`.
+
+**Clone the source:**
+
+```bash
+git clone https://github.com/richenxiao/tokenfurnace.git
+cd tokenfurnace
 python run.py
 ```
 
-Your browser opens `http://127.0.0.1:8760/`. Pure Python standard library. Nothing to install, nothing to compile.
+**Install as a command** (from inside the clone):
+
+```bash
+pip install -e .
+tokenfurnace
+```
+
+All three need Python 3.9+ and nothing else. Config and ledger land in whichever directory you run the command from.
 
 ---
 
@@ -28,19 +49,6 @@ Today: enter an endpoint, pick a protocol, tick the models, set limits, start.
 ---
 
 ## Quick start
-
-```bash
-git clone https://github.com/richenxiao/tokenfurnace.git
-cd tokenfurnace
-python run.py
-```
-
-Or install it as a command:
-
-```bash
-pip install -e .
-tokenfurnace
-```
 
 Four steps in the UI:
 
@@ -358,6 +366,7 @@ tokenfurnace/
 │   ├── smoke_ci.py           boots the server in-process and asserts the API shape
 │   ├── smoke_live.py         end-to-end check against an already-running server
 │   ├── build_preview.py      regenerate docs/preview.html
+│   ├── build_release.py      build the single-file .pyz release asset
 │   └── check_batch_ui.js     runs the real frontend under jsdom (needs npm i jsdom)
 ├── tests/test_core.py        90 offline unit tests
 ├── config.example.json       config template

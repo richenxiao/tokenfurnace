@@ -8,6 +8,7 @@ from __future__ import annotations
 import copy
 import json
 import mimetypes
+import pkgutil
 import threading
 import time
 import urllib.parse
@@ -22,7 +23,9 @@ from .engine import (MAX_TOTAL_WORKERS, MODE_LABELS, Engine, RunSpec,
 from .providers import AUTH_STYLES, PROTOCOLS, Adapter, guess_protocol, test_connection
 from .store import DEFAULT_RETENTION_DAYS, Store
 
-WEB_DIR = Path(__file__).resolve().parent / "web"
+# 前端资源一律通过 pkgutil 读，不拼文件系统路径。
+# 拼路径在源码安装和 pip 安装下都没问题，但打进单文件 zipapp 之后
+# `Path(__file__).parent / "web"` 指向的是压缩包内的虚拟路径，is_file() 恒为假。
 MAX_BODY = 4 * 1024 * 1024
 
 
@@ -439,13 +442,20 @@ class Handler(BaseHTTPRequestHandler):
         rel = rel.split("?")[0].lstrip("/")
         if not rel:
             rel = "index.html"
-        target = (WEB_DIR / rel).resolve()
-        if not str(target).startswith(str(WEB_DIR.resolve())) or not target.is_file():
+        # 路径穿越防护：pkgutil 会直接拼路径，不校验的话 ../ 能读到包外
+        parts = [p for p in rel.split("/") if p not in ("", ".")]
+        if ".." in parts or "\\" in rel or ":" in rel:
             return self._err("静态资源不存在", 404)
-        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        if ctype.startswith("text/") or ctype in ("application/javascript",):
+        try:
+            data = pkgutil.get_data("tokenfurnace", "web/" + "/".join(parts))
+        except Exception:
+            data = None
+        if data is None:
+            return self._err("静态资源不存在", 404)
+        ctype = mimetypes.guess_type(rel)[0] or "application/octet-stream"
+        if ctype.startswith("text/") or ctype == "application/javascript":
             ctype += "; charset=utf-8"
-        self._send(200, target.read_bytes(), ctype)
+        self._send(200, data, ctype)
 
 
 def serve(base_dir: Path, host: str = "127.0.0.1", port: int = 8760,
