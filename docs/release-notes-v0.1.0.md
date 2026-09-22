@@ -64,9 +64,9 @@ python tokenfurnace-0.1.0.pyz
 
 ```
 
-tokenfurnace-0.1.0.pyz          c051190d5a6885269e33e6109ac23cbe1a8f5c0343093d7bcb05a441ed83e108
+tokenfurnace-0.1.0.pyz          cf1c6ddfd4d01ecbc855c390b9091989bd4a8cea2bb744d1da8a05676f298d6f
 
-tokenfurnace-0.1.0-windows.zip  e72d541b2c457188f3731decbd0915252d73f232ceb781cb7cbda746bfdaf9eb
+tokenfurnace-0.1.0-windows.zip  7880d272dbc7efa448859619020db47d0ad72c9d2d511e195343aed420f3a909
 
 ```
 
