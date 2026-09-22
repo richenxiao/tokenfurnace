@@ -285,6 +285,9 @@ function poolRow(p, i) {
      <input class="p-models" placeholder="*flash-lite*" value="${escapeHtml((p.models || []).join(','))}">
      <input class="p-5h" type="number" placeholder="5h 上限" value="${p.limit_5h || 0}">
      <input class="p-week" type="number" placeholder="周上限" value="${p.limit_week || 0}">
+     <input class="p-rebate" type="number" step="0.1" placeholder="返赠比例"
+            title="这个池每消耗 1 积分返多少别的积分，没有活动就留空"
+            value="${p.rebate || 0}">
      <button type="button" class="p-del" title="删除">×</button>`;
   row.querySelector('.p-del').addEventListener('click', () => row.remove());
   return row;
@@ -297,12 +300,14 @@ function readPools() {
       .map(s => s.trim()).filter(Boolean),
     limit_5h: +row.querySelector('.p-5h').value || 0,
     limit_week: +row.querySelector('.p-week').value || 0,
+    rebate: +row.querySelector('.p-rebate').value || 0,
   })).filter(p => p.models.length);
 }
 
 $('btnAddPool').addEventListener('click', () => {
   const box = $('poolList');
-  box.appendChild(poolRow({ name: '', models: [], limit_5h: 60000, limit_week: 600000 },
+  box.appendChild(poolRow({ name: '', models: [], limit_5h: 60000,
+                            limit_week: 600000, rebate: 0 },
                           box.children.length));
 });
 
@@ -663,10 +668,16 @@ function poolHtml(p) {
   const tag = p.blocked
     ? '<span class="badge red" style="margin-left:6px">已用满</span>' : '';
   const models = (p.models || []).join('、');
+  // 有返赠比例时把「这一窗口挣了多少」也摆出来，用来核对平台到底给没给
+  const rebate = p.rebate > 0
+    ? `<div class="pool-rebate">本窗口预计返赠 <b>${num(p.rebate_5h, 0)}</b> 积分`
+      + `　周累计 <b>${num(p.rebate_week, 0)}</b>（比例 ${p.rebate}:1）</div>`
+    : '';
   return `<div class="pool-block">
       <div class="pool-head"><span class="pool-name">${escapeHtml(p.name || '')}</span>${tag}</div>
       ${p.limit_5h > 0 ? barRow('5 小时窗口', p.points_5h, p.limit_5h) : ''}
       ${p.limit_week > 0 ? barRow('周窗口', p.points_week, p.limit_week) : ''}
+      ${rebate}
       ${models ? `<div class="pool-models">匹配模型：${escapeHtml(models)}</div>` : ''}
     </div>`;
 }

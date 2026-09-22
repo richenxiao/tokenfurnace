@@ -722,6 +722,28 @@ class TestCreditPools(unittest.TestCase):
         self.assertEqual(u[0]["points_5h"], 1000.0)
         self.assertEqual(u[1]["points_5h"], 0.0, "不该重复计入通用池")
 
+    def test_rebate_estimated_from_pool_usage(self):
+        """返赠比例填了才显示，用来核对平台到底给没给。"""
+        pools = [{"name": "专属", "models": ["*flash-lite*"],
+                  "limit_5h": 60000, "limit_week": 600000, "rebate": 1.0},
+                 {"name": "通用", "models": ["*"], "limit_5h": 60000,
+                  "limit_week": 600000}]
+        by5 = {"sensenova-6.8-flash-lite": 45000.0}
+        u = pool_usage(by5, by5, pools, 0.97)
+        self.assertEqual(u[0]["rebate"], 1.0)
+        self.assertEqual(u[0]["rebate_5h"], 45000.0, "1:1 返赠，消耗多少就返多少")
+        self.assertEqual(u[1]["rebate_5h"], 0.0, "没填比例的池不显示返赠")
+
+    def test_rebate_defaults_to_zero(self):
+        u = pool_usage({"m": 100.0}, {}, [{"name": "p", "models": ["*"]}], 0.97)
+        self.assertEqual(u[0]["rebate"], 0.0)
+        self.assertEqual(u[0]["rebate_5h"], 0.0)
+
+    def test_rebate_can_be_fractional(self):
+        pools = [{"name": "p", "models": ["*"], "limit_5h": 1000, "rebate": 0.5}]
+        u = pool_usage({"m": 200.0}, {}, pools, 0.97)
+        self.assertEqual(u[0]["rebate_5h"], 100.0)
+
     def test_no_pools_means_no_pool_state(self):
         self.assertEqual(pool_usage({"m": 1.0}, {}, [], 0.97), [])
 

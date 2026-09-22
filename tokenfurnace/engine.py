@@ -241,6 +241,10 @@ def pool_usage(by_5h: dict, by_week: dict, pools: list,
     """按池汇总窗口占用。返回的每项可直接给界面用。
 
     模型先按 pool_of 归属到唯一一个池再累加，避免同时匹配多个模式时被重复计入。
+
+    `rebate` 是可选字段：这个池每消耗 1 积分能返赠多少别的积分。
+    平台常见的活动规则是「消耗 1 专属积分返 1 通用积分」，
+    填 1 就能在界面上直接看到这一窗口挣了多少——用来核对平台到底给没给。
     """
     if not pools:
         return []
@@ -262,6 +266,7 @@ def pool_usage(by_5h: dict, by_week: dict, pools: list,
     for i, p in enumerate(pools):
         l5 = float(p.get("limit_5h") or 0)
         lw = float(p.get("limit_week") or 0)
+        rate = float(p.get("rebate") or 0)
         blocked_5h = l5 > 0 and u5[i] >= l5 * safety_ratio
         blocked_week = lw > 0 and uw[i] >= lw * safety_ratio
         out.append({
@@ -269,6 +274,9 @@ def pool_usage(by_5h: dict, by_week: dict, pools: list,
             "models": list(p.get("models") or ["*"]),
             "points_5h": round(u5[i], 1), "limit_5h": l5,
             "points_week": round(uw[i], 1), "limit_week": lw,
+            "rebate": rate,
+            "rebate_5h": round(u5[i] * rate, 1),
+            "rebate_week": round(uw[i] * rate, 1),
             "blocked_5h": blocked_5h, "blocked_week": blocked_week,
             "blocked": blocked_5h or blocked_week,
         })
