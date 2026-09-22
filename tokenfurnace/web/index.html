@@ -223,12 +223,32 @@
           </label>
         </div>
 
+        <div class="field">
+          <span>积分池<span class="tail">留空 = 单池</span></span>
+          <div id="poolList" class="pool-list"></div>
+          <button type="button" class="mini" id="btnAddPool">+ 添加积分池</button>
+          <div class="hint">
+            平台把积分拆成多个**独立计额**的池时必须逐池声明。有些平台在专属池用尽时
+            <b>不报错</b>，而是静默改从下一个池扣费——请求照样成功，工具察觉不到。
+            逐池声明后，某个池用满就会停手，不会误烧到别的池。
+            <br>按顺序匹配，<b>首个命中生效</b>：把专属池写在前面，兜底的 <code>*</code> 写在最后。
+            模型支持 glob，例如 <code>*flash-lite*</code>。
+          </div>
+        </div>
+
         <label class="field"><span>换算系数<span class="tail">积分 / 1K tokens</span></span>
           <div class="stepper" data-min="0" data-max="1000" data-step="0.1">
             <button data-d="-1">−</button><input type="number" id="ppk" step="0.0001"><button data-d="1">+</button>
             <button id="btnCalib" style="width:auto;padding:0 9px;font-size:11px">反推</button>
+            <button id="btnRecalc" style="width:auto;padding:0 9px;font-size:11px"
+                    title="系数填错后修正时用：把历史记录按当前系数重新折算">重算历史</button>
           </div>
         </label>
+        <div class="hint">
+          窗口积分是逐请求落库的，**改系数不会自动改历史**——这是有意为之，正常调参不该篡改已发生的事实。
+          但系数**填错之后修正**是另一回事：不重算的话窗口会一直显示错的占用，周窗口最长要卡 7 天。
+          确认新系数填对了再点「重算历史」。
+        </div>
 
         <label class="switch"><input type="checkbox" id="loop"><span class="track"></span>
           <span class="txt">挂机模式
@@ -327,14 +347,7 @@
     <div class="panel open">
       <div class="head">滚动窗口占用<span class="badge grey" id="winBadge">未启用</span></div>
       <div class="body">
-        <div>
-          <div class="kv"><span>5 小时窗口</span><span class="v" id="w5Text">—</span></div>
-          <div class="bar" id="w5Bar"><i style="width:0%"></i></div>
-        </div>
-        <div style="margin-top:6px">
-          <div class="kv"><span>周窗口</span><span class="v" id="wWText">—</span></div>
-          <div class="bar" id="wWBar"><i style="width:0%"></i></div>
-        </div>
+        <div id="winBody"></div>
         <div class="kv" id="waitRow" style="display:none">
           <span>等待中</span><span class="v" id="waitText">—</span>
         </div>

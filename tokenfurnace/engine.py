@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import random
 import string
 import threading
@@ -98,6 +99,9 @@ class RunSpec:
     points_per_1k: float = 0
     safety_ratio: float = 0.97
     loop: bool = False
+    # 积分池。空列表时退化成上面那对 limit_5h / limit_week 的单池行为。
+    # 每项：{"name": str, "models": [glob...], "limit_5h": float, "limit_week": float}
+    pools: list = field(default_factory=list)
 
     extra_body: dict = field(default_factory=dict)
 
@@ -215,6 +219,62 @@ def series_10s(recent: list, now: float, buckets: int = 30,
 # ====================================================================== #
 # 一次消费会话
 # ====================================================================== #
+def _match_any(model: str, patterns: list) -> bool:
+    """模型是否命中某个池的任一 glob 模式。"""
+    return any(fnmatch.fnmatch(model, p or "*") for p in patterns)
+
+
+def pool_of(model: str, pools: list) -> int | None:
+    """模型属于第几个池。**首个匹配生效**，所以池的顺序就是优先级。
+
+    平台规则是「专属积分不足后再扣通用积分」，把专属池写在前面、
+    兜底的通用池（`*`）写在后面，语义就对齐了。
+    """
+    for i, p in enumerate(pools):
+        if _match_any(model, p.get("models") or ["*"]):
+            return i
+    return None
+
+
+def pool_usage(by_5h: dict, by_week: dict, pools: list,
+               safety_ratio: float) -> list:
+    """按池汇总窗口占用。返回的每项可直接给界面用。
+
+    模型先按 pool_of 归属到唯一一个池再累加，避免同时匹配多个模式时被重复计入。
+    """
+    if not pools:
+        return []
+    assign = {}
+    for m in set(by_5h) | set(by_week):
+        i = pool_of(m, pools)
+        if i is not None:
+            assign[m] = i
+    u5 = [0.0] * len(pools)
+    uw = [0.0] * len(pools)
+    for m, v in by_5h.items():
+        if m in assign:
+            u5[assign[m]] += v
+    for m, v in by_week.items():
+        if m in assign:
+            uw[assign[m]] += v
+
+    out = []
+    for i, p in enumerate(pools):
+        l5 = float(p.get("limit_5h") or 0)
+        lw = float(p.get("limit_week") or 0)
+        blocked_5h = l5 > 0 and u5[i] >= l5 * safety_ratio
+        blocked_week = lw > 0 and uw[i] >= lw * safety_ratio
+        out.append({
+            "name": p.get("name") or f"池 {i + 1}",
+            "models": list(p.get("models") or ["*"]),
+            "points_5h": round(u5[i], 1), "limit_5h": l5,
+            "points_week": round(uw[i], 1), "limit_week": lw,
+            "blocked_5h": blocked_5h, "blocked_week": blocked_week,
+            "blocked": blocked_5h or blocked_week,
+        })
+    return out
+
+
 class Session:
     """一个配置 + 一份参数 = 一条独立的消费流水线。"""
 
@@ -235,6 +295,9 @@ class Session:
         self._thread: threading.Thread | None = None
         self._pool: ThreadPoolExecutor | None = None
         self._tls_store = threading.local()
+        # 各积分池的窗口占用，由 _refresh_pools() 刷新
+        self._pool_state: list = []
+        self._pool_at = 0.0
         # 最近若干次成功请求的耗时，用来自适应调整超时
         self._lat = deque(maxlen=20)
         self._adapter = None
@@ -360,16 +423,39 @@ class Session:
             total += len(w) + 1
         return " ".join(parts)
 
-    def _pick_model(self) -> dict:
-        models = self.spec.models
-        total = sum(max(0, float(m.get("weight") or 1)) for m in models) or 1.0
+    def _pick_model(self) -> dict | None:
+        """按权重抽一个模型，跳过所在积分池已经用满的那些。
+
+        这一步是防「通用积分被吃掉」的关键。平台在专属积分不足时会**静默**
+        改从通用池扣费，请求照样返回 200，工具察觉不到——唯一能防的办法
+        就是在专属池用满之后不再向它发请求。
+        """
+        usable = self._usable_models()
+        if not usable:
+            return None
+        total = sum(max(0, float(m.get("weight") or 1)) for m in usable) or 1.0
         x = self._rnd_for_thread().random() * total
         acc = 0.0
-        for m in models:
+        for m in usable:
             acc += max(0, float(m.get("weight") or 1))
             if x <= acc:
                 return m
-        return models[-1]
+        return usable[-1]
+
+    def _usable_models(self) -> list:
+        """勾选的模型里，所在池还没被限住的那部分。
+
+        没配池、或池状态还没刷新过时，原样返回——不能因为拿不到池信息就一个都不发。
+        """
+        models = self.spec.models or []
+        if not self._pool_state:
+            return models
+        blocked_pools = {i for i, p in enumerate(self._pool_state) if p["blocked"]}
+        if not blocked_pools:
+            return models
+        pools = self.spec.pools or []
+        keep = [m for m in models if pool_of(m.get("id") or "", pools) not in blocked_pools]
+        return keep
 
     def _coef(self, model: dict) -> float:
         v = float(model.get("points_per_1k") or 0)
@@ -384,6 +470,10 @@ class Session:
             return
 
         model = self._pick_model()
+        if model is None:
+            # 勾选的模型全在已用满的积分池里。主循环的闸门会去等窗口滑出，
+            # 这里直接返回——硬发出去就是扣下一个池的积分。
+            return
         mid = model["id"]
         # 混合模式：每 5 个请求穿插一次生成，让 token 构成更自然
         mode = spec.mode
@@ -530,12 +620,46 @@ class Session:
         """窗口积分直接取落库值，与当前模型选择和系数无关。"""
         return self.store.window_points(seconds) if self.store else 0.0
 
+    def _refresh_pools(self, max_age: float = 2.0) -> None:
+        """刷新各积分池的窗口占用。
+
+        每个批次刷一次而不是每个请求刷一次：池状态本来就变得慢，
+        并发 8 时每请求查一次库是纯浪费。max_age 让快照读取也不至于反复查库。
+        """
+        pools = self.spec.pools or []
+        if not pools or not self.store:
+            self._pool_state = []
+            return
+        now = time.time()
+        if self._pool_state and now - self._pool_at < max_age:
+            return
+        by5 = self.store.window_points_by_model(WINDOW_5H, now)
+        byw = self.store.window_points_by_model(WINDOW_WEEK, now)
+        self._pool_state = pool_usage(by5, byw, pools, self.spec.safety_ratio)
+        self._pool_at = now
+
     def _gate(self) -> bool:
         """滚动窗口闸门。返回 True 表示放行。
 
         窗口是全局的：任一会话把额度用满，所有会话一起等——平台额度本来就共享。
+
+        配了积分池时按池判定。某个池用满**不等于**整个会话要停：只要还有别的池
+        能用，就只避开被限的那个（_pick_model 负责跳过）。这很关键——平台在专属
+        积分不足时会**静默**改从通用池扣费，请求照样 200，继续发就是白烧通用积分。
         """
         spec = self.spec
+        self._refresh_pools()
+
+        if self._pool_state:
+            blocked = [p for p in self._pool_state if p["blocked"]]
+            if blocked and not self._usable_models():
+                names = "、".join(p["name"] for p in blocked)
+                oldest = self.store.window_oldest_ts(WINDOW_5H) if self.store else None
+                wait = max(30.0, (oldest or time.time()) + WINDOW_5H - time.time() + 5)
+                self._wait_window(wait, f"积分池已用满：{names}")
+                return not self._stop.is_set()
+            return True
+
         if spec.limit_week <= 0 and spec.limit_5h <= 0:
             return True
         w = self.store.windows() if self.store else {}
@@ -629,7 +753,10 @@ class Engine:
         self.lock = threading.RLock()
         self._sessions: dict[str, Session] = {}
         self._instant_win = INSTANT_WIN
-        self._win_ctx: tuple[float, float, bool, float] = (0.0, 0.0, False, 0.0)
+        self._win_ctx: dict = {"limit_5h": 0.0, "limit_week": 0.0,
+                               "enforce": False, "coef": 0.0,
+                               "pools": [], "safety_ratio": 0.97}
+        self._idle_pools_cache: tuple = ([], 0.0)
         self._logs: list[dict] = []
         self.max_total_workers = max_total_workers
 
@@ -644,10 +771,15 @@ class Engine:
         return self._instant_win
 
     def set_window_context(self, limit_5h: float, limit_week: float,
-                           enforce: bool, coef: float) -> None:
+                           enforce: bool, coef: float,
+                           pools: list | None = None,
+                           safety_ratio: float = 0.97) -> None:
         """由服务层喂入当前 profile 的额度设置，供未运行时的窗口展示使用。"""
-        self._win_ctx = (float(limit_5h or 0), float(limit_week or 0),
-                         bool(enforce), float(coef or 0))
+        self._win_ctx = {"limit_5h": float(limit_5h or 0),
+                         "limit_week": float(limit_week or 0),
+                         "enforce": bool(enforce), "coef": float(coef or 0),
+                         "pools": list(pools or []),
+                         "safety_ratio": float(safety_ratio or 0.97)}
 
     # ------------------------------------------------------------ 日志
     def log(self, msg: str, level: str = "info", sid: str = "", name: str = "") -> None:
@@ -735,7 +867,10 @@ class Engine:
         agg["workers_in_use"] = self.workers_in_use()
         agg["max_total_workers"] = self.max_total_workers
 
-        l5, lw, enforce, coef = self._win_ctx
+        l5 = self._win_ctx["limit_5h"]
+        lw = self._win_ctx["limit_week"]
+        enforce = self._win_ctx["enforce"]
+        coef = self._win_ctx["coef"]
         run_sess = next((s for s in sess if s.running), None)
         if run_sess:
             l5, lw = run_sess.spec.limit_5h, run_sess.spec.limit_week
@@ -744,8 +879,10 @@ class Engine:
         coef_set = coef > 0 or any(
             float(m.get("points_per_1k") or 0) > 0
             for s in sess for m in s.spec.models)
-        if l5 or lw or enforce:
+        if l5 or lw or enforce or self._win_ctx["pools"]:
             w = self.store.windows(now) if self.store else {}
+            pools = (run_sess._pool_state if (run_sess and run_sess._pool_state)
+                     else self._idle_pools(now))
             agg["windows"] = {
                 "tokens_5h": w.get("tokens_5h", 0),
                 "tokens_week": w.get("tokens_week", 0),
@@ -753,8 +890,26 @@ class Engine:
                 "points_week": w.get("points_week", 0.0),
                 "limit_5h": l5, "limit_week": lw,
                 "enforce": enforce, "coef_set": coef_set,
+                "pools": pools,
             }
         return agg
+
+    def _idle_pools(self, now: float) -> list:
+        """没有会话在跑时，按当前配置的池现算一次占用，供界面显示。
+
+        带 2 秒缓存：快照每秒被拉一次，不缓存的话就是每秒一次全表分组查询。
+        """
+        pools = self._win_ctx["pools"]
+        if not pools or not self.store:
+            return []
+        cached, at = self._idle_pools_cache
+        if cached and now - at < 2.0:
+            return cached
+        by5 = self.store.window_points_by_model(WINDOW_5H, now)
+        byw = self.store.window_points_by_model(WINDOW_WEEK, now)
+        out = pool_usage(by5, byw, pools, self._win_ctx["safety_ratio"])
+        self._idle_pools_cache = (out, now)
+        return out
 
     def _aggregate(self, parts: list[dict]) -> dict:
         """把所有会话的实时指标加总成一份，给看板顶部用。"""

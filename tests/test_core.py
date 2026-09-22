@@ -18,8 +18,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tokenfurnace.config import ConfigStore, new_profile  # noqa: E402
 from tokenfurnace.engine import (Engine, Live, RunSpec, Session,  # noqa: E402
-                               bump_minute, bump_recent, effective_window,
-                               instant_rate, spark_series)
+                                 _match_any, bump_minute, bump_recent,
+                                 effective_window, instant_rate, pool_of,
+                                 pool_usage, spark_series)
 from tokenfurnace.providers import (AUTH_STYLES, PROTOCOLS, Adapter,  # noqa: E402
                                   classify, guess_protocol, join_url)
 from tokenfurnace.server import Server  # noqa: E402
@@ -674,6 +675,88 @@ class TestServerBinding(unittest.TestCase):
             first.server_close()
             if second:
                 second.server_close()
+
+
+class TestCreditPools(unittest.TestCase):
+    """积分池。防的是一个真实事故：
+
+    平台把积分拆成专属池和通用池，专属池用完时**不报错**，而是静默改从通用池扣。
+    请求照样返回 200，工具察觉不到，于是一直发、一直烧，
+    把不该动的通用积分吃掉——而那部分不参与返赠。
+    唯一能防的办法就是按池核算，池满了就不向该池的模型发请求。
+    """
+
+    POOLS = [
+        {"name": "专属", "models": ["*flash-lite*"], "limit_5h": 60000, "limit_week": 600000},
+        {"name": "通用", "models": ["*"], "limit_5h": 60000, "limit_week": 600000},
+    ]
+
+    def test_glob_match(self):
+        self.assertTrue(_match_any("sensenova-6.8-flash-lite", ["*flash-lite*"]))
+        self.assertFalse(_match_any("deepseek-v4-pro", ["*flash-lite*"]))
+        self.assertTrue(_match_any("any-model", ["*"]))
+
+    def test_pool_assignment_first_match_wins(self):
+        """专属池写在前面，兜底池写后面，语义才和平台一致。"""
+        self.assertEqual(pool_of("sensenova-6.8-flash-lite", self.POOLS), 0)
+        self.assertEqual(pool_of("deepseek-v4-pro", self.POOLS), 1)
+
+    def test_usage_split_by_pool(self):
+        by5 = {"sensenova-6.8-flash-lite": 58000.0, "deepseek-v4-pro": 1200.0}
+        byw = {"sensenova-6.8-flash-lite": 300000.0, "deepseek-v4-pro": 5000.0}
+        u = pool_usage(by5, byw, self.POOLS, 0.97)
+        self.assertEqual(u[0]["points_5h"], 58000.0)
+        self.assertEqual(u[1]["points_5h"], 1200.0)
+        self.assertFalse(u[0]["blocked"], "58000 < 60000*0.97，还不该拦")
+
+    def test_pool_blocks_when_exhausted(self):
+        by5 = {"sensenova-6.8-flash-lite": 59000.0, "deepseek-v4-pro": 100.0}
+        u = pool_usage(by5, {}, self.POOLS, 0.97)
+        self.assertTrue(u[0]["blocked"], "专属池该被拦")
+        self.assertFalse(u[1]["blocked"], "通用池还早")
+
+    def test_model_matching_two_pools_counted_once(self):
+        """同时命中多个模式时只归第一个池，否则占用会被重复计算。"""
+        by5 = {"sensenova-6.8-flash-lite": 1000.0}
+        u = pool_usage(by5, {}, self.POOLS, 0.97)
+        self.assertEqual(u[0]["points_5h"], 1000.0)
+        self.assertEqual(u[1]["points_5h"], 0.0, "不该重复计入通用池")
+
+    def test_no_pools_means_no_pool_state(self):
+        self.assertEqual(pool_usage({"m": 1.0}, {}, [], 0.97), [])
+
+    def _session(self, pools):
+        s = Session("t", RunSpec(models=[
+            {"id": "sensenova-6.8-flash-lite", "weight": 1, "points_per_1k": 0},
+            {"id": "deepseek-v4-pro", "weight": 1, "points_per_1k": 0},
+        ], pools=pools))
+        return s
+
+    def test_pick_model_skips_blocked_pool(self):
+        """专属池满了以后，抽模型不能再抽到它——抽到就是白烧通用积分。"""
+        s = self._session(self.POOLS)
+        s._pool_state = pool_usage(
+            {"sensenova-6.8-flash-lite": 60000.0, "deepseek-v4-pro": 0.0},
+            {}, self.POOLS, 0.97)
+        picked = {s._pick_model()["id"] for _ in range(60)}
+        self.assertNotIn("sensenova-6.8-flash-lite", picked,
+                         "专属池已满，不该再被抽到")
+        self.assertEqual(picked, {"deepseek-v4-pro"})
+
+    def test_pick_model_returns_none_when_all_pools_blocked(self):
+        """全部池都满了要返回 None，让主循环去等窗口，而不是硬发。"""
+        s = self._session(self.POOLS)
+        s._pool_state = pool_usage(
+            {"sensenova-6.8-flash-lite": 60000.0, "deepseek-v4-pro": 60000.0},
+            {}, self.POOLS, 0.97)
+        self.assertIsNone(s._pick_model())
+
+    def test_pick_model_unaffected_without_pools(self):
+        """没配池时行为完全不变，不能因为拿不到池信息就一个模型都不发。"""
+        s = self._session([])
+        s._pool_state = []
+        picked = {s._pick_model()["id"] for _ in range(60)}
+        self.assertEqual(len(picked), 2)
 
 
 class TestMultiSession(unittest.TestCase):

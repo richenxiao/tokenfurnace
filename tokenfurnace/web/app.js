@@ -134,6 +134,7 @@ function readSpec() {
     enforce_windows: $('enforceWin').checked,
     limit_5h: +$('limit5h').value || 0,
     limit_week: +$('limitWeek').value || 0,
+    pools: readPools(),
     points_per_1k: +$('ppk').value || 0,
     loop: $('loop').checked,
     models: Object.entries(sel).filter(([, v]) => v.on).map(([id, v]) => ({
@@ -165,6 +166,7 @@ function fillForm(cfg, active) {
   const lim = p.limits || {};
   $('limit5h').value = lim.window_5h ?? 60000;
   $('limitWeek').value = lim.week ?? 600000;
+  renderPools(p.pools || []);
 
   setSeg('modeSeg', d.mode || 'prefill');
   $('modeTail').textContent = ({
@@ -266,6 +268,43 @@ function renderFirstRun() {
      <ol>${steps.map(s => `<li>${s}</li>`).join('')}</ol>
      <div class="fr-note">配好后点「测试连接」验证，再点「用当前配置开始消费」。</div>`;
 }
+
+/** 积分池编辑区。留空即单池，行为等同上面的 5 小时 / 周额度。 */
+function renderPools(pools) {
+  const box = $('poolList');
+  box.innerHTML = '';
+  (pools || []).forEach((p, i) => box.appendChild(poolRow(p, i)));
+}
+
+function poolRow(p, i) {
+  const row = document.createElement('div');
+  row.className = 'pool-row';
+  row.dataset.i = i;
+  row.innerHTML =
+    `<input class="p-name" placeholder="池名称" value="${escapeHtml(p.name || '')}">
+     <input class="p-models" placeholder="*flash-lite*" value="${escapeHtml((p.models || []).join(','))}">
+     <input class="p-5h" type="number" placeholder="5h 上限" value="${p.limit_5h || 0}">
+     <input class="p-week" type="number" placeholder="周上限" value="${p.limit_week || 0}">
+     <button type="button" class="p-del" title="删除">×</button>`;
+  row.querySelector('.p-del').addEventListener('click', () => row.remove());
+  return row;
+}
+
+function readPools() {
+  return [...$('poolList').querySelectorAll('.pool-row')].map(row => ({
+    name: row.querySelector('.p-name').value.trim() || '积分池',
+    models: row.querySelector('.p-models').value.split(',')
+      .map(s => s.trim()).filter(Boolean),
+    limit_5h: +row.querySelector('.p-5h').value || 0,
+    limit_week: +row.querySelector('.p-week').value || 0,
+  })).filter(p => p.models.length);
+}
+
+$('btnAddPool').addEventListener('click', () => {
+  const box = $('poolList');
+  box.appendChild(poolRow({ name: '', models: [], limit_5h: 60000, limit_week: 600000 },
+                          box.children.length));
+});
 
 /** 配置档案条下方的状态行：改动是否已落盘、密钥是否齐备。 */
 function renderSaveState() {
@@ -574,33 +613,35 @@ function renderLive(L) {
   // —— 窗口 ——
   const w = L.windows;
   const hasLimit = w && (w.limit_5h > 0 || w.limit_week > 0);
+  const pools = (w && w.pools) || [];
+  const badge = $('winBadge');
   if (w && w.enforce && !w.coef_set) {
     // 没设换算系数就没法把 token 折算成积分，限流形同虚设，必须说清楚
-    $('winBadge').textContent = '缺换算系数';
-    $('winBadge').className = 'badge red';
-    $('w5Text').textContent = '未设换算系数，无法按积分限流';
-    $('wWText').textContent = `窗口内 ${human(w.tokens_5h, 1)} / ${human(w.tokens_week, 1)} tokens`;
-    $('w5Bar').querySelector('i').style.width = '0%';
-    $('wWBar').querySelector('i').style.width = '0%';
+    badge.textContent = '缺换算系数';
+    badge.className = 'badge red';
+    $('winBody').innerHTML = '<div class="kv"><span>未设换算系数，无法按积分限流</span></div>'
+      + `<div class="kv"><span>窗口内</span><span class="v">${human(w.tokens_5h, 1)} / ${human(w.tokens_week, 1)} tokens</span></div>`;
+  } else if (pools.length) {
+    badge.textContent = w.enforce ? '已启用' : '仅展示';
+    badge.className = 'badge ' + (w.enforce ? 'green' : 'grey');
+    $('winBody').innerHTML = pools.map(poolHtml).join('');
   } else if (hasLimit) {
-    $('winBadge').textContent = w.enforce ? '已启用' : '仅展示';
-    $('winBadge').className = 'badge ' + (w.enforce ? 'green' : 'grey');
-    paintBar('w5', w.points_5h, w.limit_5h, `${num(w.points_5h, 0)} / ${num(w.limit_5h, 0)} 积分`);
-    paintBar('wW', w.points_week, w.limit_week, `${num(w.points_week, 0)} / ${num(w.limit_week, 0)} 积分`);
+    badge.textContent = w.enforce ? '已启用' : '仅展示';
+    badge.className = 'badge ' + (w.enforce ? 'green' : 'grey');
+    $('winBody').innerHTML = poolHtml({
+      name: '合计', points_5h: w.points_5h, limit_5h: w.limit_5h,
+      points_week: w.points_week, limit_week: w.limit_week, blocked: false,
+    });
   } else if (w) {
-    $('winBadge').textContent = '未设额度';
-    $('winBadge').className = 'badge grey';
-    $('w5Text').textContent = `窗口内 ${human(w.tokens_5h, 1)} tokens`;
-    $('wWText').textContent = `窗口内 ${human(w.tokens_week, 1)} tokens`;
-    $('w5Bar').querySelector('i').style.width = '0%';
-    $('wWBar').querySelector('i').style.width = '0%';
+    badge.textContent = '未设额度';
+    badge.className = 'badge grey';
+    $('winBody').innerHTML =
+      `<div class="kv"><span>5 小时窗口</span><span class="v">${human(w.tokens_5h, 1)} tokens</span></div>`
+      + `<div class="kv"><span>周窗口</span><span class="v">${human(w.tokens_week, 1)} tokens</span></div>`;
   } else {
-    $('winBadge').textContent = '未设置';
-    $('winBadge').className = 'badge grey';
-    $('w5Text').textContent = '—';
-    $('wWText').textContent = '—';
-    $('w5Bar').querySelector('i').style.width = '0%';
-    $('wWBar').querySelector('i').style.width = '0%';
+    badge.textContent = '未设置';
+    badge.className = 'badge grey';
+    $('winBody').innerHTML = '<div class="kv"><span>—</span></div>';
   }
   if (L.wait_until && L.wait_until > Date.now() / 1000) {
     $('waitRow').style.display = '';
@@ -617,12 +658,26 @@ function renderLive(L) {
   drawChart(series);
 }
 
-function paintBar(id, used, limit, text) {
-  const pct = limit > 0 ? Math.min(100, used / limit * 100) : 0;
-  $(id + 'Text').textContent = `${text}（${pct.toFixed(1)}%）`;
-  const bar = $(id + 'Bar');
-  bar.className = 'bar' + (pct > 92 ? ' hot' : pct > 75 ? ' warn' : '');
-  bar.querySelector('i').style.width = pct + '%';
+/** 一个积分池的窗口占用：5 小时 + 周两条进度条。 */
+function poolHtml(p) {
+  const tag = p.blocked
+    ? '<span class="badge red" style="margin-left:6px">已用满</span>' : '';
+  const models = (p.models || []).join('、');
+  return `<div class="pool-block">
+      <div class="pool-head"><span class="pool-name">${escapeHtml(p.name || '')}</span>${tag}</div>
+      ${p.limit_5h > 0 ? barRow('5 小时窗口', p.points_5h, p.limit_5h) : ''}
+      ${p.limit_week > 0 ? barRow('周窗口', p.points_week, p.limit_week) : ''}
+      ${models ? `<div class="pool-models">匹配模型：${escapeHtml(models)}</div>` : ''}
+    </div>`;
+}
+
+function barRow(label, used, limit) {
+  const pct = limit > 0 ? Math.min(100, (used || 0) / limit * 100) : 0;
+  const cls = pct > 92 ? ' hot' : pct > 75 ? ' warn' : '';
+  return `<div style="margin-top:6px">
+      <div class="kv"><span>${label}</span><span class="v">${num(used || 0, 0)} / ${num(limit, 0)} 积分（${pct.toFixed(1)}%）</span></div>
+      <div class="bar${cls}"><i style="width:${pct.toFixed(1)}%"></i></div>
+    </div>`;
 }
 
 /* ==================== 迷你速率图 ==================== */
@@ -1003,6 +1058,7 @@ function bind() {
       points_per_1k: +$('ppk').value || 0,
       limits: { window_5h: +$('limit5h').value || 0,
                 week: +$('limitWeek').value || 0, unit: 'points' },
+      pools: readPools(),
       auth: { source: 'env', ref: 'MY_LLM_API_KEY', style: $('authStyle').value },
     } });
     dirty = false; modelSig = ''; sel = {};
@@ -1077,6 +1133,21 @@ function bind() {
       toast(`按 5h 窗口反推：窗口内 ${num(r.tokens)} tokens ÷ 上限 ${num(r.limit_5h)} 积分\n` +
         `→ ${r.points_per_1k.toFixed(4)} 积分/1K tokens\n` +
         `（前提：该窗口额度确实被打满过，否则这只是上界）`, 'warn', 11000);
+    } catch (e2) { toast(e2.message, 'err'); }
+  });
+
+  $('btnRecalc').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const coef = +$('ppk').value || 0;
+    if (coef <= 0) return toast('请先填换算系数', 'err');
+    if (!confirm(`把全部历史记录按 ${coef} 积分/1K tokens 重新折算？\n\n`
+      + '这是给「系数之前填错了」用的。正常调参不需要点这个——'
+      + '窗口积分本来就是逐请求落库的，不会随系数自动变。')) return;
+    try {
+      const r = await api('/api/points/recalc',
+        { profile_id: S.active_profile, points_per_1k: coef });
+      toast(`已按 ${coef} 重算 ${num(r.rows)} 条历史记录的积分`, 'ok');
+      await tick();
     } catch (e2) { toast(e2.message, 'err'); }
   });
 
@@ -1171,6 +1242,7 @@ async function saveProfile() {
     models: Object.keys(sel),
     selected: spec.models,
     limits: { window_5h: spec.limit_5h, week: spec.limit_week, unit: 'points' },
+    pools: readPools(),
     points_per_1k: spec.points_per_1k,
   } });
   await api('/api/config/engine', { defaults: {

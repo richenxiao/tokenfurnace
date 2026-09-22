@@ -50,6 +50,11 @@ DEFAULT_CONFIG = {
             "selected": [],
             "limits": {"window_5h": 0, "week": 0, "unit": "tokens"},
             "points_per_1k": 0,
+            # 积分池。留空 = 单池，行为等同上面的 limits。
+            # 平台把积分拆成多个独立计额的池时（比如专属积分池 + 通用积分池），
+            # 在这里逐池声明，工具才能在某个池用满时停手，
+            # 而不是继续发请求让平台悄悄改从下一个池扣费。
+            "pools": [],
             "note": "",
         }
     ],
@@ -119,6 +124,10 @@ class ConfigStore:
         if not self.data.get("active_profile") or not any(
                 p["id"] == self.data["active_profile"] for p in self.data["profiles"]):
             self.data["active_profile"] = self.data["profiles"][0]["id"]
+        # pools 是后加的字段，老配置里没有。放在这里统一补齐而不是塞进 _migrate：
+        # _migrate 只在版本号落后时跑一次，而这里每次加载都会过一遍，幂等且不会漏。
+        for p in self.data["profiles"]:
+            p.setdefault("pools", [])
         return self.data
 
     def save(self) -> None:

@@ -208,6 +208,50 @@ class Store:
                 "WHERE ok=1 AND ts > ?", (now - seconds,)).fetchone()
         return float(row["p"])
 
+    def window_points_by_model(self, seconds: float,
+                               now: float | None = None) -> dict:
+        """窗口内按模型分组的积分，供多积分池分别核算。
+
+        为什么按模型分组而不是让 SQL 拼 LIKE：一个池可能匹配多个模型模式，
+        拼出来是一串 `model LIKE ? OR model LIKE ?...`，池一多就难读也难优化。
+        先 GROUP BY 拿回各模型的合计（模型数量本来就是个位数），
+        池的归属交给调用方做 glob 匹配，SQL 保持简单。
+        """
+        now = now or time.time()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT model, COALESCE(SUM(points),0) AS p FROM requests "
+                "WHERE ok=1 AND ts > ? GROUP BY model", (now - seconds,)).fetchall()
+        return {(r["model"] or ""): float(r["p"]) for r in rows}
+
+    def recalc_points(self, default_coef: float,
+                      model_coef: dict | None = None) -> int:
+        """按给定系数重算所有历史记录的积分，返回受影响的行数。
+
+        为什么需要这个：窗口积分是**逐请求落库**的，改系数不会自动改历史。
+        这是有意为之——正常调系数不该篡改已经发生的事实。但系数**填错之后修正**
+        是另一回事：不重算的话，窗口会一直显示错误的占用，周窗口最长要等 7 天
+        才自然恢复正常，期间工具会一直以为额度满了、拒绝干活。
+        所以留一个显式动作，让用户确认系数改对了之后再重新折算。
+
+        模型级别的系数优先于默认值，和实时记账的口径保持一致。
+        """
+        model_coef = model_coef or {}
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                "SELECT id, model, prompt_tokens+completion_tokens AS t FROM requests"
+            ).fetchall()
+            n = 0
+            for r in rows:
+                coef = float(model_coef.get(r["model"]) or default_coef or 0)
+                pts = (r["t"] or 0) * coef / 1000.0
+                self._conn.execute("UPDATE requests SET points=? WHERE id=?",
+                                   (pts, r["id"]))
+                n += 1
+            self._write_seq += 1
+        self._win_cache = (self._write_seq, 0.0, 0.0, None)
+        return n
+
     def windows(self, now: float | None = None) -> dict:
         """一次查询取回 5 小时 + 周两个窗口的 tokens 与积分。
 

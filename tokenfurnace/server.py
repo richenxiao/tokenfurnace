@@ -74,6 +74,8 @@ class App:
             (active.get("limits") or {}).get("week") or 0,
             bool(ed.get("enforce_windows")),
             active.get("points_per_1k") or 0,
+            pools=active.get("pools") or [],
+            safety_ratio=ed.get("safety_ratio") or 0.97,
         )
         return {
             "version": __version__,
@@ -330,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
                 spec.limit_week = float((prof.get("limits") or {}).get("week") or 0)
             if not spec.points_per_1k:
                 spec.points_per_1k = float(prof.get("points_per_1k") or 0)
+            if not spec.pools:
+                spec.pools = [dict(x) for x in (prof.get("pools") or [])]
             return self._json(app.engine.start(spec, prof, key))
 
         if path == "/api/run/start_batch":
@@ -365,6 +369,7 @@ class Handler(BaseHTTPRequestHandler):
                 spec.limit_5h = float(lim.get("window_5h") or 0)
                 spec.limit_week = float(lim.get("week") or 0)
                 spec.points_per_1k = float(prof.get("points_per_1k") or 0)
+                spec.pools = [dict(x) for x in (prof.get("pools") or [])]
                 r = app.engine.start(spec, prof, key)
                 if r.get("ok"):
                     started.append({"sid": r["sid"], "name": name})
@@ -387,6 +392,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._err("请填入本窗口消耗的 token 数（可在历史里查看）")
             coef = points * 1000.0 / tokens if points > 0 else 0.0
             return self._json({"ok": True, "points_per_1k": coef})
+
+        if path == "/api/points/recalc":
+            # 系数填错之后修正，需要把历史记录按新系数重新折算，
+            # 否则窗口会一直显示错的占用（周窗口最长卡 7 天）。
+            prof = cfg.get_profile(body.get("profile_id"))
+            coef = float(body.get("points_per_1k") or prof.get("points_per_1k") or 0)
+            if coef <= 0:
+                return self._err("换算系数为 0，无法重算")
+            model_coef = {m.get("id"): float(m.get("points_per_1k") or 0)
+                          for m in (prof.get("selected") or [])
+                          if float(m.get("points_per_1k") or 0) > 0}
+            n = app.store.recalc_points(coef, model_coef)
+            app.engine.log(f"已按系数 {coef:g} 重算 {n:,} 条历史记录的积分", "warn")
+            return self._json({"ok": True, "rows": n, "points_per_1k": coef})
 
         if path == "/api/calibrate/auto":
             # 用「5 小时窗口已消耗 tokens + 上限积分」反推
