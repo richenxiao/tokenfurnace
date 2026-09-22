@@ -64,9 +64,9 @@ python tokenfurnace-0.1.0.pyz
 
 ```
 
-tokenfurnace-0.1.0.pyz          cf1c6ddfd4d01ecbc855c390b9091989bd4a8cea2bb744d1da8a05676f298d6f
+tokenfurnace-0.1.0.pyz          62608560aa11bf60438486099bef489d0ce9ea5963e1c16e7fb328cb2c4b94a2
 
-tokenfurnace-0.1.0-windows.zip  7880d272dbc7efa448859619020db47d0ad72c9d2d511e195343aed420f3a909
+tokenfurnace-0.1.0-windows.zip  8096793bbb876f07c5d7784760b4c3ab463b91c88d35ba5408d52d358e2ce6fd
 
 ```
 
@@ -104,6 +104,8 @@ shasum -a 256 tokenfurnace-0.1.0-windows.zip
   专属池用尽时平台会**静默**改扣下一个池、请求照样返回 200，工具察觉不到；
   按池核算后，某个池用满就停手，不会误烧别的池
 - **滚动窗口记账**：5 小时和 7 天两个滑动窗口，积分逐请求落库，撞墙精确等待而不是轮询
+- **返赠统计**：池配置可填返赠比例（比如「消耗 1 专属积分返 1 通用积分」），
+  窗口面板会显示本窗口和周累计的预计返赠，用来核对平台到底给没给
 - **重算历史**：换算系数填错后修正时，可把历史记录按新系数重新折算，
   不用等 7 天让错误的窗口数据自然过期
 
