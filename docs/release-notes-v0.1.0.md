@@ -12,6 +12,11 @@ python tokenfurnace-0.1.0.pyz
 
 浏览器会自动打开 `http://127.0.0.1:8760/`。需要 Python 3.9+，没有其他依赖，不用 clone、不用 pip。
 
+`.pyz` 是 Python 的 zipapp（PEP 441），把一个完整程序打成一个文件，等同于 Java 的 `.jar`。
+**它要在终端里用 `python` 运行，双击通常没反应**——Windows 默认没给 `.pyz` 关联打开方式。
+
+想双击启动的话，下载下面的 `Source code (zip)`，解压后双击 `start.bat`（Windows）或 `start.sh`。
+
 配置和账本会落在你执行命令时所在的目录（`config.json` 和 `data/`）。
 
 下面的 `Source code` 压缩包是源码，只有在你想读代码或参与开发时才需要。

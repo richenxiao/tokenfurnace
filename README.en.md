@@ -17,7 +17,11 @@ English · [简体中文](README.md)
 python tokenfurnace-0.1.0.pyz
 ```
 
-The whole tool is that one 60 KB file. No clone, no pip, no directory layout to worry about. Your browser opens `http://127.0.0.1:8760/`.
+The whole tool is that one 61 KB file. No clone, no pip, no directory layout to worry about. Your browser opens `http://127.0.0.1:8760/`.
+
+A `.pyz` is a Python zipapp (PEP 441): a complete program packed into one file, the equivalent of a Java `.jar`. **It has to be run from a terminal with `python`.** Double-clicking usually does nothing, because Windows has no default file association for `.pyz`.
+
+**Prefer double-clicking?** Download `Source code (zip)` from the bottom of the Releases page, extract it, and double-click `start.bat` (Windows) or `start.sh` (macOS / Linux).
 
 **Clone the source:**
 
@@ -34,9 +38,7 @@ pip install -e .
 tokenfurnace
 ```
 
-All three need Python 3.9+ and nothing else. Config and ledger land in whichever directory you run the command from.
-
-**Don't want to type commands?** The source tree ships `start.bat` (Windows) and `start.sh` (macOS / Linux). Double-click either one; the script finds Python itself and tells you if it can't.
+All four need Python 3.9+ and nothing else. Config and ledger land in whichever directory you run the command from.
 
 ---
 

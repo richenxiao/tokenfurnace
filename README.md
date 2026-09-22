@@ -17,7 +17,11 @@
 python tokenfurnace-0.1.0.pyz
 ```
 
-整个工具就这一个文件，60 KB。不用 clone，不用 pip，不用管目录结构。浏览器会自动打开 `http://127.0.0.1:8760/`。
+整个工具就这一个文件，61 KB。不用 clone，不用 pip，不用管目录结构。浏览器会自动打开 `http://127.0.0.1:8760/`。
+
+`.pyz` 是 Python 的 zipapp（PEP 441），把一个完整程序打成一个文件，等同于 Java 的 `.jar`。**它要在终端里用 `python` 运行，双击通常没反应**，因为 Windows 默认没给 `.pyz` 关联打开方式。
+
+**想双击启动**：下载 Releases 页面底部的 `Source code (zip)`，解压后双击 `start.bat`（Windows）或 `start.sh`（macOS / Linux）。
 
 **克隆源码**：
 
@@ -34,9 +38,7 @@ pip install -e .
 tokenfurnace
 ```
 
-三种方式都只需要 Python 3.9+，没有其他依赖。配置和账本会落在你执行命令时所在的目录。
-
-**不想敲命令**：源码目录里带了 `start.bat`（Windows）和 `start.sh`（macOS / Linux），双击就能起，脚本会自己找 Python 并给出提示。
+四种方式都只需要 Python 3.9+，没有其他依赖。配置和账本会落在你执行命令时所在的目录。
 
 ---
 
