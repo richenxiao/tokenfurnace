@@ -305,6 +305,26 @@ Keep-alive mode waits through the wall and resumes automatically.
 
 > **On metering scope.** A platform's general credit pool and its Flash-Lite-only pool are metered separately, while the local ledger keeps one combined total. Burn only Flash-Lite and the two agree. Mix in a model billed against general credits and the window reading drifts from the platform's own figure, so leave headroom.
 
+### Credit pools: declare each one when the platform splits credits
+
+Some platforms split credits into separately metered pools, such as a model-specific pool and a general pool, each with its own 5-hour and weekly allowance. The usual rule is to draw from the specific pool first and fall back to the general one.
+
+The dangerous part: when the specific pool runs dry the platform **doesn't error**. It silently charges the next pool and still returns 200. The tool can't see it, keeps sending, and drains a pool it shouldn't have touched. Credits charged that way typically don't count toward rebates.
+
+Declare each pool under *Limits & duration → Credit pools* and the tool accounts per pool, stopping before a full one gets overdrawn:
+
+| Pool | Model patterns | 5-hour cap | Weekly cap |
+|---|---|---|---|
+| Flash-Lite only | `*flash-lite*` | 60000 | 600000 |
+| General | `*` | 60000 | 600000 |
+
+Matching is in order, **first match wins**. Put the specific pool first and the `*` catch-all last, and the semantics line up with the platform's fallback rule. Patterns are globs.
+
+Leave it empty for single-pool behaviour, identical to the 5-hour / weekly fields above.
+
+**Recalculate history after fixing a wrong coefficient.** Window credits are stored per request, so changing the coefficient does **not** rewrite history (deliberate: normal tuning shouldn't alter what already happened). But *correcting a coefficient that was wrong* is different. Without a recalculation the window keeps showing the wrong figure, and the weekly window stays stuck for up to 7 days while the tool thinks the quota is full. Once you're sure the new coefficient is right, click *Recalculate history*.
+
+
 ### Cost coefficient
 
 If your platform bills in credits rather than tokens, set a coefficient (credits per 1K tokens) and the tool can show live credit spend, brake on a credit budget, and throttle on 5h/weekly credit windows.
