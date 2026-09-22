@@ -30,6 +30,31 @@ from .store import DEFAULT_RETENTION_DAYS, Store
 MAX_BODY = 4 * 1024 * 1024
 
 
+
+def normalize_models(selected) -> list:
+    """把 profile 里的 selected 统一成 [{"id","weight","points_per_1k"}]。
+
+    这个字段历史上出现过两种形态：早期是纯字符串列表，后来带上了权重和
+    单独系数，变成字典列表。老配置和手工写的 config.json 里可能还是字符串，
+    所以两种都要认。
+
+    踩过的坑：只按字符串处理会把 `{"id": {"id": "x", ...}}` 这种嵌套字典
+    喂给下游，最后在 ", ".join(模型id) 那里炸掉——而且只在「没显式传 models」
+    的调用路径上炸，UI 走的是显式传参，所以一直没暴露。
+    """
+    out = []
+    for m in selected or []:
+        if isinstance(m, dict):
+            mid = m.get("id")
+            if mid:
+                out.append({"id": str(mid),
+                            "weight": float(m.get("weight") or 1),
+                            "points_per_1k": float(m.get("points_per_1k") or 0)})
+        elif m:
+            out.append({"id": str(m), "weight": 1.0, "points_per_1k": 0.0})
+    return out
+
+
 class App:
     """把 config / store / engine 组装在一起，供 handler 调用。"""
 
@@ -322,8 +347,7 @@ class Handler(BaseHTTPRequestHandler):
             spec = RunSpec.from_dict(body.get("spec") or {})
             spec.profile_id = prof.get("id", "")
             if not spec.models:
-                spec.models = [{"id": m, "weight": 1, "points_per_1k": 0}
-                               for m in (prof.get("selected") or [])]
+                spec.models = normalize_models(prof.get("selected"))
             if not spec.models:
                 return self._err("请先勾选至少一个模型。")
             if not spec.limit_5h:
@@ -358,7 +382,7 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 spec = copy.deepcopy(base)
                 spec.profile_id = prof.get("id", "")
-                spec.models = [dict(m) for m in (prof.get("selected") or [])]
+                spec.models = normalize_models(prof.get("selected"))
                 if not spec.models:
                     failed.append({"profile_id": pid, "name": name,
                                    "error": "没有勾选任何模型"})

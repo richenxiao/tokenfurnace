@@ -23,7 +23,7 @@ from tokenfurnace.engine import (Engine, Live, RunSpec, Session,  # noqa: E402
                                  pool_usage, spark_series)
 from tokenfurnace.providers import (AUTH_STYLES, PROTOCOLS, Adapter,  # noqa: E402
                                   classify, guess_protocol, join_url)
-from tokenfurnace.server import Server  # noqa: E402
+from tokenfurnace.server import Server, normalize_models  # noqa: E402
 from tokenfurnace.store import Store  # noqa: E402
 
 
@@ -757,6 +757,40 @@ class TestCreditPools(unittest.TestCase):
         s._pool_state = []
         picked = {s._pick_model()["id"] for _ in range(60)}
         self.assertEqual(len(picked), 2)
+
+
+class TestNormalizeModels(unittest.TestCase):
+    """配置里的 selected 有两种历史形态，两种都要认。
+
+    踩过的坑：只按字符串处理时，字典会被再包一层变成
+    `{"id": {"id": "x", ...}}`，最后在 ", ".join(模型id) 处抛
+    `TypeError: sequence item 0: expected str instance, dict found`。
+    而且只在「没显式传 models」的调用路径上炸，UI 走显式传参，所以长期没暴露。
+    """
+
+    def test_dict_form_kept_as_is(self):
+        got = normalize_models([{"id": "m-a", "weight": 3, "points_per_1k": 0.5}])
+        self.assertEqual(got, [{"id": "m-a", "weight": 3.0, "points_per_1k": 0.5}])
+
+    def test_string_form_upgraded(self):
+        got = normalize_models(["m-a", "m-b"])
+        self.assertEqual([m["id"] for m in got], ["m-a", "m-b"])
+        self.assertEqual(got[0]["weight"], 1.0)
+        self.assertEqual(got[0]["points_per_1k"], 0.0)
+
+    def test_mixed_and_missing_fields(self):
+        got = normalize_models([{"id": "m-a"}, "m-b", {}, None, ""])
+        self.assertEqual([m["id"] for m in got], ["m-a", "m-b"],
+                         "空字典和空值要被丢掉，不能产生无 id 的条目")
+
+    def test_result_is_joinable(self):
+        """真正防的就是这个：下游会 ", ".join(模型 id)。"""
+        got = normalize_models([{"id": "m-a", "weight": 1}, "m-b"])
+        self.assertEqual(", ".join(m["id"] for m in got), "m-a, m-b")
+
+    def test_empty_input(self):
+        self.assertEqual(normalize_models(None), [])
+        self.assertEqual(normalize_models([]), [])
 
 
 class TestMultiSession(unittest.TestCase):
