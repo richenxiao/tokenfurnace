@@ -23,7 +23,22 @@ python tokenfurnace-0.1.0.pyz
 
 **想双击启动**：下载 Releases 页面底部的 `Source code (zip)`，解压后双击 `start.bat`（Windows）或 `start.sh`（macOS / Linux）。
 
-**克隆源码**：
+**装到固定位置 + 桌面图标**（推荐，一次装好以后不用再找）：
+
+```bash
+git clone https://github.com/richenxiao/tokenfurnace.git
+cd tokenfurnace
+python scripts/install.py
+```
+
+装完之后桌面上会多一个 `TokenFurnace` 图标，**以后双击它就行**——不用记命令、不用找目录。
+程序装到 `%LOCALAPPDATA%\TokenFurnace`（macOS / Linux 是 `~/.local/share/tokenfurnace`），
+配置和账本一起迁过去，历史数据不丢。
+
+源码目录通常带日期（比如 `2026-09-20-09-30-59`），哪天被清理掉工具就一起没了——
+这个脚本就是为了避免那种事。想卸载：`python scripts/install.py --uninstall`（配置和账本会保留）。
+
+**克隆源码直接跑**：
 
 ```bash
 git clone https://github.com/richenxiao/tokenfurnace.git
@@ -375,6 +390,7 @@ tokenfurnace/
 │   ├── smoke_live.py         对已运行的服务做端到端联调
 │   ├── build_preview.py      重新生成 docs/preview.html
 │   ├── build_release.py      打成单文件 .pyz（Release 附件）
+│   ├── install.py            装到固定位置并建桌面图标
 │   └── check_batch_ui.js     用 jsdom 跑真实前端代码（需 npm i jsdom）
 ├── tests/test_core.py        90 个离线单元测试
 ├── config.example.json       配置模板

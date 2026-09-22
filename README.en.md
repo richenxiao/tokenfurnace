@@ -23,7 +23,20 @@ A `.pyz` is a Python zipapp (PEP 441): a complete program packed into one file, 
 
 **Prefer double-clicking?** Download `Source code (zip)` from the bottom of the Releases page, extract it, and double-click `start.bat` (Windows) or `start.sh` (macOS / Linux).
 
-**Clone the source:**
+**Install to a fixed location with a desktop icon** (recommended; you never have to find it again):
+
+```bash
+git clone https://github.com/richenxiao/tokenfurnace.git
+cd tokenfurnace
+python scripts/install.py
+```
+
+You get a `TokenFurnace` icon on your desktop. **Double-click it from then on** — no commands, no hunting for directories.
+It installs to `%LOCALAPPDATA%\TokenFurnace` on Windows (`~/.local/share/tokenfurnace` elsewhere) and migrates your config and ledger, so history carries over.
+
+Source directories usually carry a date (like `2026-09-20-09-30-59`); if one gets cleaned up the tool goes with it. This script exists so that can't happen. To remove: `python scripts/install.py --uninstall` (config and ledger are kept).
+
+**Clone and run directly:**
 
 ```bash
 git clone https://github.com/richenxiao/tokenfurnace.git
@@ -373,6 +386,7 @@ tokenfurnace/
 │   ├── smoke_live.py         end-to-end check against an already-running server
 │   ├── build_preview.py      regenerate docs/preview.html
 │   ├── build_release.py      build the single-file .pyz release asset
+│   ├── install.py            install to a fixed location with a desktop icon
 │   └── check_batch_ui.js     runs the real frontend under jsdom (needs npm i jsdom)
 ├── tests/test_core.py        90 offline unit tests
 ├── config.example.json       config template
